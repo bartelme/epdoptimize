@@ -40,6 +40,7 @@ export type DitheringType =
   | "ordered"
   | "random"
   | "quantizationOnly"
+  | "hueMix"
   | (string & {});
 
 export interface DitherImageOptions {
@@ -366,6 +367,7 @@ const ditherImage = async (
   ]);
 
   let current, newPixel, oldPixel;
+  const hueMixPalette = getHueMixPalette(colorPalette);
 
   for (current = 0; current < image.data.length; current += 4) {
     const currentPixel = current;
@@ -409,6 +411,17 @@ const ditherImage = async (
       );
       newPixel = findClosestPaletteColor(
         newPixel,
+        colorPalette,
+        options.colorMatching
+      );
+      setPixel(currentPixel, newPixel);
+    }
+
+    if (options.ditheringType === "hueMix") {
+      newPixel = hueMixDitherPixelValue(
+        oldPixel,
+        pixelXY(currentPixel / 4, width),
+        hueMixPalette,
         colorPalette,
         options.colorMatching
       );
@@ -482,6 +495,7 @@ const applyErrorDiffusion = (
   serpentine: boolean
 ) => {
   const diffusionMap = getDiffusionMap(matrixName);
+  const sourceData = new Uint8ClampedArray(image.data);
 
   for (let y = 0; y < height; y++) {
     const reverse = serpentine && y % 2 === 1;
@@ -492,10 +506,12 @@ const applyErrorDiffusion = (
     for (let x = xStart; x !== xEnd; x += xStep) {
       const currentPixel = (y * width + x) * 4;
       const oldPixel = getPixelColorValues(currentPixel, image.data);
+      const sourcePixel = getPixelColorValues(currentPixel, sourceData);
       const newPixel = findClosestPaletteColor(
         oldPixel,
         colorPalette,
-        colorMatching
+        colorMatching,
+        sourcePixel
       );
 
       setImageDataPixel(image, currentPixel, newPixel);
@@ -565,6 +581,148 @@ const orderedDitherPixelValue = (
     pixel[3],
   ];
 };
+
+interface HueMixColor {
+  color: RGB;
+  hue: number;
+  luma: number;
+  saturation: number;
+}
+
+interface HueMixPalette {
+  chromatic: HueMixColor[];
+  white: HueMixColor | null;
+}
+
+const getHueMixPalette = (palette: RGB[]): HueMixPalette => {
+  const colors = palette.map((color) => ({
+    color,
+    hue: getHue(color),
+    luma: luma709(color[0], color[1], color[2]),
+    saturation: getSaturation(color),
+  }));
+  const chromatic = colors
+    .filter((entry) => entry.saturation >= 0.18 && entry.luma >= 24)
+    .sort((left, right) => left.hue - right.hue);
+  const neutralCandidates = colors.filter((entry) => entry.saturation < 0.18);
+  const whiteCandidates = neutralCandidates.length ? neutralCandidates : colors;
+  let white: HueMixColor | null = null;
+  for (const entry of whiteCandidates) {
+    if (!white || entry.luma > white.luma) white = entry;
+  }
+
+  return {
+    chromatic,
+    white,
+  };
+};
+
+const hueMixDitherPixelValue = (
+  pixel: RGBA,
+  coordinates: [number, number],
+  hueMixPalette: HueMixPalette,
+  colorPalette: RGB[],
+  colorMatching: ColorMatchingMode
+): RGBA => {
+  if (hueMixPalette.chromatic.length < 2 || !hueMixPalette.white) {
+    return findClosestPaletteColor(pixel, colorPalette, colorMatching);
+  }
+
+  const targetSaturation = getSaturation(pixel);
+  if (targetSaturation < 0.08) {
+    return findClosestPaletteColor(pixel, colorPalette, colorMatching);
+  }
+
+  const targetHue = getHue(pixel);
+  const [left, right, t] = getHueNeighbors(targetHue, hueMixPalette.chromatic);
+  const hueMix = smoothstep(0, 1, t);
+  const mixedLuma = left.luma * (1 - hueMix) + right.luma * hueMix;
+  const targetLuma = luma709(pixel[0], pixel[1], pixel[2]);
+  const whiteLuma = hueMixPalette.white.luma;
+  const saturationCoverage = smoothstep(0.08, 0.55, targetSaturation);
+  const lumaCoverage =
+    whiteLuma > mixedLuma
+      ? clamp((whiteLuma - targetLuma) / (whiteLuma - mixedLuma), 0, 1)
+      : 0;
+  const coverage = clamp(Math.max(saturationCoverage, lumaCoverage), 0, 1);
+  const whiteWeight = 1 - coverage;
+  const leftWeight = coverage * (1 - hueMix);
+  const rightWeight = coverage * hueMix;
+  const threshold = hashUnit(coordinates[0], coordinates[1]);
+
+  if (threshold < whiteWeight) return withAlpha(hueMixPalette.white.color, pixel);
+  if (threshold < whiteWeight + leftWeight) return withAlpha(left.color, pixel);
+  if (rightWeight > 0) return withAlpha(right.color, pixel);
+  return withAlpha(left.color, pixel);
+};
+
+const getHueNeighbors = (
+  targetHue: number,
+  chromatic: HueMixColor[]
+): [HueMixColor, HueMixColor, number] => {
+  for (let index = 0; index < chromatic.length; index += 1) {
+    const left = chromatic[index];
+    const right = chromatic[(index + 1) % chromatic.length];
+    const span = positiveHueDelta(left.hue, right.hue);
+    const offset = positiveHueDelta(left.hue, targetHue);
+    if (offset <= span) {
+      return [left, right, span === 0 ? 0 : offset / span];
+    }
+  }
+
+  return [chromatic[0], chromatic[0], 0];
+};
+
+const withAlpha = (color: RGB, pixel: RGBA): RGBA => [
+  color[0],
+  color[1],
+  color[2],
+  pixel[3],
+];
+
+const smoothstep = (edge0: number, edge1: number, value: number) => {
+  const x = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return x * x * (3 - 2 * x);
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  value < min ? min : value > max ? max : value;
+
+const hashUnit = (x: number, y: number) => {
+  const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+  return value - Math.floor(value);
+};
+
+const getSaturation = (color: RGB | RGBA) => {
+  const max = Math.max(color[0], color[1], color[2]) / 255;
+  const min = Math.min(color[0], color[1], color[2]) / 255;
+
+  return max === 0 ? 0 : (max - min) / max;
+};
+
+const getHue = (color: RGB | RGBA) => {
+  const red = color[0] / 255;
+  const green = color[1] / 255;
+  const blue = color[2] / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+
+  if (delta === 0) return 0;
+
+  let hue: number;
+  if (max === red) {
+    hue = 60 * (((green - blue) / delta) % 6);
+  } else if (max === green) {
+    hue = 60 * ((blue - red) / delta + 2);
+  } else {
+    hue = 60 * ((red - green) / delta + 4);
+  }
+
+  return hue < 0 ? hue + 360 : hue;
+};
+
+const positiveHueDelta = (from: number, to: number) => (to - from + 360) % 360;
 
 const pixelXY = (index: number, width: number): [number, number] => {
   return [index % width, Math.floor(index / width)];

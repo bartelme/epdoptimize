@@ -65,6 +65,10 @@ export const defaultPalette = getDefaultPalette("default");
 export const gameboyPalette = getDefaultPalette("gameboy");
 export const spectra6legacyPalette = getDefaultPalette("spectra6legacy");
 export const spectra6Palette = getDefaultPalette("spectra6");
+export const spectra6OriginalPalette = getDefaultPalette("spectra6-original");
+export const spectra6OriginalPreviewPalette = getDefaultPalette(
+  "spectra6-original-preview"
+);
 export const aitjcizeSpectra6Palette = getDefaultPalette("aitjcize-spectra6");
 export const acepPalette = getDefaultPalette("acep");
 

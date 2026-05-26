@@ -33,6 +33,22 @@
     { "name": "red", "color": "#62201E", "deviceColor": "#FF0000" },
     { "name": "yellow", "color": "#C1BB1E", "deviceColor": "#FFFF00" }
   ],
+  "spectra6-original": [
+    { "name": "black", "color": "#000000", "deviceColor": "#000000" },
+    { "name": "white", "color": "#FFFFFF", "deviceColor": "#FFFFFF" },
+    { "name": "blue", "color": "#0000FF", "deviceColor": "#0000FF" },
+    { "name": "green", "color": "#00FF00", "deviceColor": "#00FF00" },
+    { "name": "red", "color": "#FF0000", "deviceColor": "#FF0000" },
+    { "name": "yellow", "color": "#FFFF00", "deviceColor": "#FFFF00" }
+  ],
+  "spectra6-original-preview": [
+    { "name": "black", "color": "#000000", "deviceColor": "#1F2226" },
+    { "name": "white", "color": "#FFFFFF", "deviceColor": "#B9C7C9" },
+    { "name": "blue", "color": "#0000FF", "deviceColor": "#233F8E" },
+    { "name": "green", "color": "#00FF00", "deviceColor": "#35563A" },
+    { "name": "red", "color": "#FF0000", "deviceColor": "#62201E" },
+    { "name": "yellow", "color": "#FFFF00", "deviceColor": "#C1BB1E" }
+  ],
   "acep": [
     { "name": "black", "color": "#191E21", "deviceColor": "#000" },
     { "name": "white", "color": "#F1F1F1", "deviceColor": "#fff" },

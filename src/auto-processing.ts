@@ -86,8 +86,12 @@ function buildSuggestion(
 
   addClassificationReasons(classification, reasons);
   addPaletteReasons(paletteProfile, reasons);
-  applyIntent(base, intent, reasons);
   applyPaletteTuning(base, paletteProfile, reasons);
+  applyLearnedTuning(base, classification, intent, reasons);
+  applyIntent(base, intent, reasons);
+  if ((base.ditheringType ?? "errorDiffusion") === "errorDiffusion") {
+    reasons.push("Serpentine diffusion reduces directional dithering artifacts.");
+  }
 
   return {
     classification,
@@ -98,6 +102,9 @@ function buildSuggestion(
       colorMatching: base.colorMatching,
       errorDiffusionMatrix: base.errorDiffusionMatrix,
       ditheringType: base.ditheringType ?? "errorDiffusion",
+      ...((base.ditheringType ?? "errorDiffusion") === "errorDiffusion"
+        ? { serpentine: true }
+        : {}),
       ...(base.toneMapping ? { toneMapping: base.toneMapping } : {}),
       ...(base.dynamicRangeCompression
         ? { dynamicRangeCompression: base.dynamicRangeCompression }
@@ -156,6 +163,14 @@ function getBaseRecommendation(
         colorMatching: "rgb",
         errorDiffusionMatrix: "floydSteinberg",
         ditheringType: "errorDiffusion",
+        toneMapping: {
+          mode: "scurve",
+          saturation: 1.45,
+          strength: 0.72,
+          shadowBoost: 0.08,
+          highlightCompress: 1.3,
+          midpoint: 0.5,
+        },
       };
     case "lowContrastPhoto":
       return {
@@ -176,7 +191,7 @@ function getBaseRecommendation(
       };
     case "highContrastPhoto":
       return {
-        processingPreset: "soft",
+        processingPreset: "balanced",
         colorMatching: "rgb",
         errorDiffusionMatrix: "stucki",
         ditheringType: "errorDiffusion",
@@ -336,6 +351,48 @@ function applyIntent(
   } else if (intent === "faithful") {
     recommendation.processingPreset = "balanced";
     reasons.push("Faithful intent keeps transformations restrained.");
+  }
+}
+
+function applyLearnedTuning(
+  recommendation: RecommendationBase,
+  classification: ImageStyleClassification,
+  intent: AutoProcessingIntent,
+  reasons: string[]
+) {
+  if (intent !== "natural") return;
+
+  const { metrics } = classification;
+
+  if (
+    classification.kind === "flatIllustration" &&
+    metrics.grayRatio >= 0.82 &&
+    metrics.topColorCoverage >= 0.9 &&
+    (metrics.textTileRatio >= 0.1 || metrics.edgeDensity >= 0.16)
+  ) {
+    recommendation.processingPreset = "balanced";
+    recommendation.colorMatching = "lab";
+    recommendation.ditheringType = "quantizationOnly";
+    recommendation.toneMapping = {
+      mode: "contrast",
+      exposure: 1.03,
+      saturation: 0.9,
+      contrast: 1.2,
+    };
+    recommendation.dynamicRangeCompression = {
+      mode: "display",
+      strength: 0.75,
+    };
+    reasons.push("Pairwise ratings favored readable settings for gray UI-like artwork.");
+    return;
+  }
+
+  if (classification.kind === "flatIllustration") {
+    reasons.push("Pairwise ratings favored gentler vivid tone mapping for flat artwork.");
+  }
+
+  if (classification.kind === "highContrastPhoto") {
+    reasons.push("Pairwise ratings favored balanced tone handling for high-contrast photos.");
   }
 }
 

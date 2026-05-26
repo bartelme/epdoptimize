@@ -26,6 +26,8 @@ Built-in palette exports currently include:
 
 - `defaultPalette` (black and white)
 - `aitjcizeSpectra6Palette` (Spectra 6)
+- `spectra6OriginalPalette` (fully saturated Spectra 6 colors)
+- `spectra6OriginalPreviewPalette` (fully saturated Spectra 6 lookup with calibrated Spectra 6 preview colors)
 - `spectra6Palette` (not recommended)
 - `spectra6legacyPalette` (not recommended)
 - `acepPalette`
@@ -42,7 +44,7 @@ Built-in palette exports currently include:
 - **Dynamic range compression:** LAB lightness remapping into the target display range.
 - **Color matching modes:** RGB or LAB palette matching.
 - **Automatic processing suggestions:** Heuristically classify the image, score presets, and suggest dither options for the selected palette.
-- **Interactive demo:** Sample images, palette previews, automatic/manual processing controls, downloads, compact config JSON, and copyable JS example.
+- **Interactive demo and rating tool:** Sample images, palette previews, automatic/manual processing controls, pairwise A/B voting, downloads, compact config JSON, and copyable JS example.
 
 ## Installation
 
@@ -392,14 +394,14 @@ import {
 | ------------------------- | ----------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `palette`                 | string / string[] / palette entries | `"default"`        | Palette to use for quantization. Prefer a built-in palette export or combined palette entries with `color` and `deviceColor`; plain hex arrays work for dither-only previews.                                                                      |
 | `processingPreset`        | string                              | `undefined`        | Preset name. Options: `balanced`, `dynamic`, `vivid`, `soft`, `grayscale`. Presets fill tone mapping, dynamic range compression, color matching, and diffusion defaults unless overridden. Use `suggestProcessingOptions` for automatic selection. |
-| `ditheringType`           | string                              | `"errorDiffusion"` | Main dithering mode. Options: `errorDiffusion`, `ordered`, `random`, `quantizationOnly`.                                                                                                                                                           |
+| `ditheringType`           | string                              | `"errorDiffusion"` | Main dithering mode. Options: `errorDiffusion`, `ordered`, `random`, `quantizationOnly`, `hueMix`. `hueMix` is experimental and targets smooth synthetic hue gradients.                                                                            |
 | `errorDiffusionMatrix`    | string                              | `"floydSteinberg"` | Error diffusion kernel. Options include `floydSteinberg`, `atkinson`, `falseFloydSteinberg`, `jarvis`, `stucki`, `burkes`, `sierra3`, `sierra2`, `sierra2-4a`.                                                                                     |
 | `algorithm`               | string                              | `undefined`        | Backwards-compatible alias for `errorDiffusionMatrix`.                                                                                                                                                                                             |
 | `serpentine`              | boolean                             | `false`            | Alternates scan direction on each row for error diffusion.                                                                                                                                                                                         |
 | `orderedDitheringType`    | string                              | `"bayer"`          | Type of ordered dithering. Currently `bayer`.                                                                                                                                                                                                      |
 | `orderedDitheringMatrix`  | [number, number]                    | `[4, 4]`           | Size of the Bayer matrix for ordered dithering.                                                                                                                                                                                                    |
 | `randomDitheringType`     | string                              | `"blackAndWhite"`  | Random mode. Options: `blackAndWhite`, `rgb`.                                                                                                                                                                                                      |
-| `colorMatching`           | string                              | `"rgb"`            | Palette distance model. Options: `rgb`, `lab`.                                                                                                                                                                                                     |
+| `colorMatching`           | string                              | `"rgb"`            | Palette distance model. Options: `rgb`, `lab`, `chroma`. `chroma` is experimental and tries to keep saturated pastel colors from collapsing into white.                                                                                           |
 | `toneMapping`             | object                              | `undefined`        | Exposure, saturation, contrast, or S-curve preprocessing.                                                                                                                                                                                          |
 | `dynamicRangeCompression` | object / boolean                    | `undefined`        | LAB lightness compression. Use `{ mode: "display" }`, `{ mode: "auto" }`, or `{ mode: "off" }`.                                                                                                                                                    |
 | `levelCompression`        | object                              | `undefined`        | Optional legacy/preprocessing range remap with `perChannel` or `luma` mode.                                                                                                                                                                        |

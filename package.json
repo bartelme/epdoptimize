@@ -1,6 +1,6 @@
 {
   "name": "epdoptimize",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Efficiently optimize EPD (Electronic Paper Display) images",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -29,8 +29,7 @@
     "examples:dev": "vite --config examples/vite.config.js",
     "build:examples": "vite build --config examples/vite.config.js && cp examples/example-dither.jpg dist/examples/example-dither.jpg",
     "predeploy": "npm run build:examples",
-    "deploy": "npx gh-pages -d dist/examples",
-    "deploy:npm": "npm publish --access public"
+    "deploy": "npx gh-pages -d dist/examples"
   },
   "files": [
     "dist"

@@ -2,7 +2,7 @@ export type RGB = [number, number, number];
 export type RGBA = [number, number, number, number];
 
 export type ToneMappingMode = "off" | "contrast" | "scurve";
-export type ColorMatchingMode = "rgb" | "lab";
+export type ColorMatchingMode = "rgb" | "lab" | "chroma";
 export type DynamicRangeCompressionMode = "off" | "display" | "auto";
 export type LevelCompressionMode = "off" | "perChannel" | "luma";
 
@@ -542,4 +542,3 @@ export const applyImageProcessing = (
     palette
   );
 };
-

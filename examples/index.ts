@@ -1,14 +1,8 @@
 import {
-  acepPalette,
-  aitjcizeSpectra6Palette,
-  defaultPalette,
   ditherImage,
-  gameboyPalette,
   getProcessingPreset,
   getProcessingPresetOptions,
   replaceColors,
-  spectra6legacyPalette,
-  spectra6Palette,
   suggestCanvasProcessingOptions,
 } from "../src";
 import type {
@@ -17,152 +11,86 @@ import type {
   PaletteColorEntry,
   ProcessingSuggestion,
 } from "../src";
-
-/**
- * This is a demo page for testing and showcasing the capabilities of the library.
- * It is not intended to be an example of how to structure an application using the library :)
- * The code is not optimized for readability or maintainability.
- **/
-
-const $ = <T extends HTMLElement>(id: string) =>
-  document.getElementById(id) as T;
-
-const fileInput = $("fileInput") as HTMLInputElement;
-const sampleImageGrid = $("sampleImageGrid") as HTMLDivElement;
-const imageStyleValue = $("imageStyleValue") as HTMLElement;
-const imageStyleConfidence = $("imageStyleConfidence") as HTMLSpanElement;
-const imageStyleMeter = $("imageStyleMeter") as HTMLSpanElement;
-const imageStyleMetrics = $("imageStyleMetrics") as HTMLDListElement;
-const canvasGrid = $("canvasGrid") as HTMLDivElement;
-const inputCanvas = $("inputCanvas") as HTMLCanvasElement;
-const outputCanvas = $("outputCanvas") as HTMLCanvasElement;
-const deviceColorsCanvas = $("deviceColorsCanvas") as HTMLCanvasElement;
-const canvasFrames = Array.from(
-  document.querySelectorAll<HTMLDivElement>("[data-scroll-sync]"),
-);
-const toggleOriginalSizeButton = $(
-  "toggleOriginalSizeButton",
-) as HTMLButtonElement;
-const downloadLink = $("downloadLink") as HTMLAnchorElement;
-const downloadDeviceColorsLink = $(
-  "downloadDeviceColorsLink",
-) as HTMLAnchorElement;
-const configOutput = $("configOutput") as HTMLPreElement;
-const copyConfigButton = $("copyConfigButton") as HTMLButtonElement;
-const jsExampleOutput = $("jsExampleOutput") as HTMLPreElement;
-const copyJsExampleButton = $("copyJsExampleButton") as HTMLButtonElement;
-const screenResolutionSelect = $("screenResolutionSelect") as HTMLSelectElement;
-const orientationSelect = $("orientationSelect") as HTMLSelectElement;
-const imageFitSelect = $("imageFitSelect") as HTMLSelectElement;
-const paperIdInput = $("paperIdInput") as HTMLInputElement;
-const apiKeyInput = $("apiKeyInput") as HTMLInputElement;
-const testOnDeviceButton = $("testOnDeviceButton") as HTMLButtonElement;
-const deviceTestStatus = $("deviceTestStatus") as HTMLParagraphElement;
-
-const paletteSelect = $("paletteSelect") as HTMLSelectElement;
-const palettePreview = $("palettePreview") as HTMLDivElement;
-const deviceColorsPreview = $("deviceColorsPreview") as HTMLDivElement;
-const processingPresetSelect = $("processingPreset") as HTMLSelectElement;
-const ditheringTypeSelect = $("ditheringType") as HTMLSelectElement;
-const errorDiffusionMatrixSelect = $(
-  "errorDiffusionMatrix",
-) as HTMLSelectElement;
-const orderedDitheringMatrixW = $(
-  "orderedDitheringMatrixW",
-) as HTMLInputElement;
-const orderedDitheringMatrixH = $(
-  "orderedDitheringMatrixH",
-) as HTMLInputElement;
-const randomDitheringTypeSelect = $("randomDitheringType") as HTMLSelectElement;
-const serpentineCheckbox = $("serpentine") as HTMLInputElement;
-const colorMatchingSelect = $("colorMatching") as HTMLSelectElement;
-const autoRecommendationTitle = $("autoRecommendationTitle") as HTMLElement;
-const autoRecommendationSummary = $("autoRecommendationSummary") as HTMLElement;
-const autoRecommendationReasons = $(
-  "autoRecommendationReasons",
-) as HTMLUListElement;
-
-const toneModeSelect = $("toneMode") as HTMLSelectElement;
-const exposureInput = $("exposure") as HTMLInputElement;
-const saturationInput = $("saturation") as HTMLInputElement;
-const contrastInput = $("contrast") as HTMLInputElement;
-const scurveStrengthInput = $("scurveStrength") as HTMLInputElement;
-const shadowBoostInput = $("shadowBoost") as HTMLInputElement;
-const highlightCompressInput = $("highlightCompress") as HTMLInputElement;
-const midpointInput = $("midpoint") as HTMLInputElement;
-
-const dynamicRangeModeSelect = $("dynamicRangeMode") as HTMLSelectElement;
-const dynamicRangeStrengthInput = $("dynamicRangeStrength") as HTMLInputElement;
-const lowPercentileInput = $("lowPercentile") as HTMLInputElement;
-const highPercentileInput = $("highPercentile") as HTMLInputElement;
-
-type ScreenOrientation = "landscape" | "portrait" | "original";
-type ImageFitMode = "contain" | "cover";
-type DynamicRangeMode = "off" | "display" | "auto";
-type ToneMappingMode = "off" | "contrast" | "scurve";
-
-const DEVICE_TEST_STORAGE_KEY = "epdoptimize:device-test";
-const SCREEN_RESOLUTIONS = {
-  openpaper7: {
-    name: "openpaper7",
-    label: "7.3 Inch OpenPaper 7",
-    width: 800,
-    height: 480,
-  },
-  openpaperL: {
-    name: "openpaperL",
-    label: "13.3 Inch OpenPaper L",
-    width: 1600,
-    height: 1200,
-  },
-};
-const DEFAULT_DEVICE_TEST_CONFIG = {
-  screenResolution: "openpaper7",
-  orientation: "landscape" as ScreenOrientation,
-  imageFit: "contain" as ImageFitMode,
-  paperId: "69d59c1a23c3a25ca940ac72",
-  apiKey: "",
-};
-const DEFAULT_DITHER_OPTIONS = {
-  ditheringType: "errorDiffusion",
-  errorDiffusionMatrix: "floydSteinberg",
-  serpentine: false,
-  orderedDitheringMatrix: [4, 4],
-  randomDitheringType: "blackAndWhite",
-  colorMatching: "rgb",
-};
-const PALETTE_OPTIONS = {
-  default: {
-    label: "Default",
-    exportName: "defaultPalette",
-    palette: defaultPalette,
-  },
-  "aitjcize-spectra6": {
-    label: "aitjcize Spectra 6",
-    exportName: "aitjcizeSpectra6Palette",
-    palette: aitjcizeSpectra6Palette,
-  },
-  spectra6: {
-    label: "Spectra 6 (legacy)",
-    exportName: "spectra6Palette",
-    palette: spectra6Palette,
-  },
-  spectra6legacy: {
-    label: "Spectra 6 Legacy",
-    exportName: "spectra6legacyPalette",
-    palette: spectra6legacyPalette,
-  },
-  acep: {
-    label: "Gallery",
-    exportName: "acepPalette",
-    palette: acepPalette,
-  },
-  gameboy: {
-    label: "Game Boy",
-    exportName: "gameboyPalette",
-    palette: gameboyPalette,
-  },
-};
+import {
+  DEFAULT_DITHER_OPTIONS,
+  PALETTE_OPTIONS,
+} from "./demo/constants";
+import {
+  getOriginalImageOrientation,
+  getSelectedImageFit,
+  getSelectedOrientation,
+  getSelectedScreenResolution,
+  loadDeviceTestConfig,
+  saveDeviceTestConfig,
+  setDeviceTestStatus,
+  testOnDevice,
+} from "./demo/device-test";
+import {
+  apiKeyInput,
+  autoRecommendationReasons,
+  autoRecommendationSummary,
+  autoRecommendationTitle,
+  canvasFrames,
+  canvasGrid,
+  colorMatchingSelect,
+  configOutput,
+  contrastInput,
+  copyConfigButton,
+  copyJsExampleButton,
+  deviceColorsCanvas,
+  deviceColorsPreview,
+  downloadDeviceColorsLink,
+  downloadLink,
+  dynamicRangeModeSelect,
+  dynamicRangeStrengthInput,
+  errorDiffusionMatrixSelect,
+  exposureInput,
+  fileInput,
+  highPercentileInput,
+  highlightCompressInput,
+  imageFitSelect,
+  imageStyleConfidence,
+  imageStyleMeter,
+  imageStyleMetrics,
+  imageStyleValue,
+  inputCanvas,
+  jsExampleOutput,
+  lowPercentileInput,
+  midpointInput,
+  orderedDitheringMatrixH,
+  orderedDitheringMatrixW,
+  orientationSelect,
+  outputCanvas,
+  palettePreview,
+  paletteSelect,
+  paperIdInput,
+  processingPresetSelect,
+  randomDitheringTypeSelect,
+  sampleImageGrid,
+  saturationInput,
+  screenResolutionSelect,
+  scurveStrengthInput,
+  serpentineCheckbox,
+  shadowBoostInput,
+  testOnDeviceButton,
+  toneModeSelect,
+  toggleOriginalSizeButton,
+  ditheringTypeSelect,
+} from "./demo/elements";
+import {
+  formatDecimal,
+  formatImageKind,
+  formatImageStyle,
+  formatPresetName,
+  formatRatio,
+  formatTopScores,
+} from "./demo/format";
+import type {
+  DemoConfig,
+  DynamicRangeMode,
+  ImageFitMode,
+  ToneMappingMode,
+} from "./demo/types";
 
 const sampleImages = import.meta.glob("./sampleImages/*.{jpg,jpeg,png,webp}", {
   eager: true,
@@ -180,6 +108,8 @@ const sampleImagePreviews = import.meta.glob(
 
 let lastImage: HTMLImageElement | null = null;
 let selectedSampleUrl = "";
+let currentImageName = "";
+const sampleNameByUrl = new Map<string, string>();
 let scheduledProcess = 0;
 let processToken = 0;
 let showOriginalSize = false;
@@ -261,6 +191,7 @@ function populateSampleImageOptions() {
 
   for (const [path, url] of entries) {
     const name = formatSampleName(path);
+    sampleNameByUrl.set(url, name);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "sample-thumb";
@@ -323,109 +254,9 @@ async function loadImage(src: string) {
 async function loadSelectedSampleImage() {
   const src =
     selectedSampleUrl || import.meta.env.BASE_URL + "example-dither.jpg";
+  currentImageName = sampleNameByUrl.get(src) ?? "Sample image";
   lastImage = await loadImage(src);
   await processImage();
-}
-
-function getDeviceTestConfig() {
-  return {
-    screenResolution: screenResolutionSelect.value,
-    orientation: getSelectedOrientation(),
-    imageFit: getSelectedImageFit(),
-    paperId: paperIdInput.value.trim(),
-    apiKey: apiKeyInput.value.trim(),
-  };
-}
-
-function getSelectedScreenResolution() {
-  return (
-    SCREEN_RESOLUTIONS[
-      screenResolutionSelect.value as keyof typeof SCREEN_RESOLUTIONS
-    ] ?? SCREEN_RESOLUTIONS.openpaper7
-  );
-}
-
-function getSelectedOrientation(): ScreenOrientation {
-  if (orientationSelect.value === "original") return "original";
-  return orientationSelect.value === "portrait" ? "portrait" : "landscape";
-}
-
-function getOriginalImageOrientation(img: HTMLImageElement): ScreenOrientation {
-  return img.height > img.width ? "portrait" : "landscape";
-}
-
-function getDeviceUploadOrientation(): Exclude<ScreenOrientation, "original"> {
-  const orientation = getSelectedOrientation();
-  if (orientation !== "original") return orientation;
-  return lastImage && lastImage.height > lastImage.width
-    ? "portrait"
-    : "landscape";
-}
-
-function getSelectedImageFit(): ImageFitMode {
-  return imageFitSelect.value === "cover" ? "cover" : "contain";
-}
-
-function loadDeviceTestConfig() {
-  try {
-    const saved = JSON.parse(
-      localStorage.getItem(DEVICE_TEST_STORAGE_KEY) || "{}",
-    );
-    screenResolutionSelect.value =
-      typeof saved.screenResolution === "string" &&
-      saved.screenResolution in SCREEN_RESOLUTIONS
-        ? saved.screenResolution
-        : DEFAULT_DEVICE_TEST_CONFIG.screenResolution;
-    orientationSelect.value =
-      saved.orientation === "portrait" || saved.orientation === "original"
-        ? saved.orientation
-        : DEFAULT_DEVICE_TEST_CONFIG.orientation;
-    imageFitSelect.value =
-      saved.imageFit === "cover"
-        ? "cover"
-        : DEFAULT_DEVICE_TEST_CONFIG.imageFit;
-    paperIdInput.value =
-      typeof saved.paperId === "string"
-        ? saved.paperId
-        : DEFAULT_DEVICE_TEST_CONFIG.paperId;
-    apiKeyInput.value =
-      typeof saved.apiKey === "string"
-        ? saved.apiKey
-        : DEFAULT_DEVICE_TEST_CONFIG.apiKey;
-  } catch {
-    screenResolutionSelect.value = DEFAULT_DEVICE_TEST_CONFIG.screenResolution;
-    orientationSelect.value = DEFAULT_DEVICE_TEST_CONFIG.orientation;
-    imageFitSelect.value = DEFAULT_DEVICE_TEST_CONFIG.imageFit;
-    paperIdInput.value = DEFAULT_DEVICE_TEST_CONFIG.paperId;
-    apiKeyInput.value = DEFAULT_DEVICE_TEST_CONFIG.apiKey;
-  }
-}
-
-function saveDeviceTestConfig() {
-  localStorage.setItem(
-    DEVICE_TEST_STORAGE_KEY,
-    JSON.stringify(getDeviceTestConfig()),
-  );
-}
-
-function setDeviceTestStatus(
-  message: string,
-  state: "idle" | "success" | "error" = "idle",
-) {
-  deviceTestStatus.textContent = message;
-  deviceTestStatus.dataset.state = state;
-}
-
-function canvasToPngBlob(canvas: HTMLCanvasElement) {
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) {
-        resolve(blob);
-        return;
-      }
-      reject(new Error("Could not create PNG from canvas."));
-    }, "image/png");
-  });
 }
 
 function drawImageToScreenCanvas(
@@ -498,76 +329,6 @@ function drawImageWithFit(
   const offsetY = Math.round((height - drawHeight) / 2);
 
   ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
-}
-
-async function testOnDevice() {
-  const { paperId, apiKey } = getDeviceTestConfig();
-
-  if (!paperId) {
-    setDeviceTestStatus("Missing paper ID.", "error");
-    return;
-  }
-
-  if (!apiKey) {
-    setDeviceTestStatus("Missing x-api-key.", "error");
-    return;
-  }
-
-  if (deviceColorsCanvas.width === 0 || deviceColorsCanvas.height === 0) {
-    setDeviceTestStatus("No device image to upload.", "error");
-    return;
-  }
-
-  testOnDeviceButton.disabled = true;
-  setDeviceTestStatus("Uploading...");
-
-  try {
-    const pictureBlob = await canvasToPngBlob(outputCanvas);
-    const pictureDeviceBlob = await canvasToPngBlob(deviceColorsCanvas);
-    const formData = new FormData();
-    formData.append("picture", pictureBlob, "epdoptimize-dithered.png");
-    formData.append(
-      "pictureDevice",
-      pictureDeviceBlob,
-      "epdoptimize-device.png",
-    );
-    formData.append(
-      "settings",
-      JSON.stringify({
-        meta: {
-          orientation: getDeviceUploadOrientation(),
-        },
-      }),
-    );
-
-    const response = await fetch(
-      `https://api.paperlesspaper.de/v1/papers/uploadSingleImage/${encodeURIComponent(
-        paperId,
-      )}`,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "x-api-key": apiKey,
-        },
-        body: formData,
-      },
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        errorText || `Upload failed with status ${response.status}.`,
-      );
-    }
-
-    setDeviceTestStatus("Sent to device.", "success");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Upload failed.";
-    setDeviceTestStatus(message, "error");
-  } finally {
-    testOnDeviceButton.disabled = false;
-  }
 }
 
 function setInputValue(input: HTMLInputElement, value: number | undefined) {
@@ -774,7 +535,7 @@ function getDitherOptionsFromUI(palette: PaletteColorEntry[]) {
     ],
     randomDitheringType: randomDitheringTypeSelect.value,
     palette,
-    colorMatching: colorMatchingSelect.value as "rgb" | "lab",
+    colorMatching: colorMatchingSelect.value as DitherImageOptions["colorMatching"],
     calibrate: true,
     toneMapping: getToneMappingFromUI(),
     dynamicRangeCompression: getDynamicRangeCompressionFromUI(),
@@ -980,7 +741,7 @@ function getCompactDitherOptions(options: Partial<DitherImageOptions>) {
   return configOptions;
 }
 
-function getDemoConfig() {
+function getDemoConfig(): DemoConfig {
   const selectedPalette = getSelectedPaletteOption();
 
   return {
@@ -1013,40 +774,6 @@ await ditherImage(inputCanvas, ditheredCanvas, {
   palette,
 });
 replaceColors(ditheredCanvas, deviceCanvas, palette);`;
-}
-
-function formatImageStyle(style: ImageStyleClassification["style"]) {
-  if (style === "photo") return "Photo";
-  if (style === "illustration") return "Illustration";
-  return "Unknown";
-}
-
-function formatImageKind(kind: ImageStyleClassification["kind"]) {
-  return kind
-    .replace(/([A-Z])/g, " $1")
-    .replace(/^./, (char) => char.toUpperCase());
-}
-
-function formatPresetName(name: unknown) {
-  return String(name)
-    .replace(/([A-Z])/g, " $1")
-    .replace(/^./, (char) => char.toUpperCase());
-}
-
-function formatTopScores(scores: Record<string, number>, count = 3) {
-  return Object.entries(scores)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, count)
-    .map(([name, score]) => `${formatPresetName(name)} ${formatRatio(score)}`)
-    .join(", ");
-}
-
-function formatRatio(value: number) {
-  return `${Math.round(value * 100)}%`;
-}
-
-function formatDecimal(value: number) {
-  return value.toFixed(2);
 }
 
 function updateImageStyleResult(result: ImageStyleClassification) {
@@ -1183,6 +910,9 @@ fileInput.addEventListener("change", async () => {
   const src = URL.createObjectURL(file);
   const img = await loadImage(src);
   lastImage = img;
+  selectedSampleUrl = "";
+  currentImageName = file.name;
+  updateSelectedSampleButton();
   URL.revokeObjectURL(src);
   await processImage();
 });
@@ -1281,7 +1011,7 @@ copyJsExampleButton.addEventListener("click", async () => {
   });
 });
 
-testOnDeviceButton.addEventListener("click", testOnDevice);
+testOnDeviceButton.addEventListener("click", () => testOnDevice(lastImage));
 
 toggleOriginalSizeButton.addEventListener("click", () => {
   showOriginalSize = !showOriginalSize;
