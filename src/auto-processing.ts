@@ -42,6 +42,43 @@ export interface ProcessingSuggestion {
   pipelineSteps?: ProcessingPipelineStep[];
 }
 
+export type AutoImageAdjustmentOptions = Pick<
+  Partial<DitherImageOptions>,
+  | "toneMapping"
+  | "dynamicRangeCompression"
+  | "levelCompression"
+  | "paperNormalization"
+>;
+
+export type AutoCanvasDitherOptions = Pick<
+  Partial<DitherImageOptions>,
+  | "colorMatching"
+  | "ditheringType"
+  | "errorDiffusionMatrix"
+  | "serpentine"
+>;
+
+export interface AutoImageAdjustmentSuggestion {
+  classification: ImageStyleClassification;
+  imageKind: ImageKind;
+  intent: AutoProcessingIntent;
+  strategy?: ProcessingSuggestion["strategy"];
+  adjustmentOptions: AutoImageAdjustmentOptions;
+  reasons: string[];
+  scores: Record<string, number>;
+}
+
+export interface AutoCanvasDitherSuggestion {
+  classification: ImageStyleClassification;
+  imageKind: ImageKind;
+  intent: AutoProcessingIntent;
+  strategy?: ProcessingSuggestion["strategy"];
+  presetName?: ProcessingPresetName;
+  ditherOptions: AutoCanvasDitherOptions;
+  reasons: string[];
+  scores: Record<string, number>;
+}
+
 export interface ProcessingPipelineStep {
   id: string;
   title: string;
@@ -109,6 +146,108 @@ export function suggestLayeredCanvasProcessingOptions(
     getPaletteProfile(palette),
     options
   );
+}
+
+export function suggestImageAdjustmentOptions(
+  image: ImageDataLike,
+  palette?: PaletteColorEntry[] | string[],
+  options: SuggestProcessingOptionsInput = {}
+): AutoImageAdjustmentSuggestion {
+  return getImageAdjustmentSuggestion(
+    suggestLayeredProcessingOptions(image, palette, options)
+  );
+}
+
+export function suggestCanvasImageAdjustmentOptions(
+  canvas: CanvasLike,
+  palette?: PaletteColorEntry[] | string[],
+  options: SuggestProcessingOptionsInput = {}
+): AutoImageAdjustmentSuggestion {
+  return getImageAdjustmentSuggestion(
+    suggestLayeredCanvasProcessingOptions(canvas, palette, options)
+  );
+}
+
+export function suggestDitherOptions(
+  image: ImageDataLike,
+  palette?: PaletteColorEntry[] | string[],
+  options: SuggestProcessingOptionsInput = {}
+): AutoCanvasDitherSuggestion {
+  return getCanvasDitherSuggestion(
+    suggestLayeredProcessingOptions(image, palette, options)
+  );
+}
+
+export function suggestCanvasDitherOptions(
+  canvas: CanvasLike,
+  palette?: PaletteColorEntry[] | string[],
+  options: SuggestProcessingOptionsInput = {}
+): AutoCanvasDitherSuggestion {
+  return getCanvasDitherSuggestion(
+    suggestLayeredCanvasProcessingOptions(canvas, palette, options)
+  );
+}
+
+function getImageAdjustmentSuggestion(
+  suggestion: ProcessingSuggestion
+): AutoImageAdjustmentSuggestion {
+  const { ditherOptions } = suggestion;
+  return {
+    classification: suggestion.classification,
+    imageKind: suggestion.imageKind,
+    intent: suggestion.intent,
+    strategy: suggestion.strategy,
+    adjustmentOptions: {
+      ...(ditherOptions.toneMapping
+        ? { toneMapping: ditherOptions.toneMapping }
+        : {}),
+      ...(ditherOptions.dynamicRangeCompression
+        ? { dynamicRangeCompression: ditherOptions.dynamicRangeCompression }
+        : {}),
+      ...(ditherOptions.levelCompression
+        ? { levelCompression: ditherOptions.levelCompression }
+        : {}),
+      ...(ditherOptions.paperNormalization
+        ? { paperNormalization: ditherOptions.paperNormalization }
+        : {}),
+    },
+    reasons: suggestion.reasons,
+    scores: suggestion.scores,
+  };
+}
+
+function getCanvasDitherSuggestion(
+  suggestion: ProcessingSuggestion
+): AutoCanvasDitherSuggestion {
+  const { ditherOptions } = suggestion;
+  const ditherOptionsOnly: AutoCanvasDitherOptions = {
+    ...(ditherOptions.colorMatching
+      ? { colorMatching: ditherOptions.colorMatching }
+      : {}),
+    ...(ditherOptions.ditheringType
+      ? { ditheringType: ditherOptions.ditheringType }
+      : {}),
+    ...(ditherOptions.errorDiffusionMatrix
+      ? { errorDiffusionMatrix: ditherOptions.errorDiffusionMatrix }
+      : {}),
+    ...(typeof ditherOptions.serpentine === "boolean"
+      ? { serpentine: ditherOptions.serpentine }
+      : {}),
+  };
+
+  return {
+    classification: suggestion.classification,
+    imageKind: suggestion.imageKind,
+    intent: suggestion.intent,
+    strategy: suggestion.strategy,
+    presetName:
+      typeof ditherOptions.processingPreset === "string"
+        ? ditherOptions.processingPreset
+        : undefined,
+    ditherOptions: ditherOptionsOnly,
+    reasons: suggestion.reasons,
+    scores: suggestion.scores,
+  };
 }
 
 function buildSuggestion(

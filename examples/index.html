@@ -314,6 +314,11 @@
         padding-left: 1rem;
       }
 
+      .auto-action {
+        grid-column: 1 / -1;
+        justify-self: start;
+      }
+
       .sample-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
@@ -584,6 +589,31 @@
         gap: 0.75rem;
       }
 
+      .config-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+      }
+
+      .config-tab {
+        min-height: 2rem;
+        padding: 0.35rem 0.6rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--paper);
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.82rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .config-tab[aria-selected="true"] {
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 10%, var(--paper));
+        color: var(--accent-strong);
+      }
+
       .config-block {
         display: grid;
         gap: 0.5rem;
@@ -748,6 +778,20 @@
                         <option value="previous">Previous auto</option>
                       </select>
                     </div>
+                    <button
+                      id="autoAdjustmentsButton"
+                      class="button auto-action"
+                      type="button"
+                    >
+                      Auto image adjustments
+                    </button>
+                    <button
+                      id="resetImageAdjustmentsButton"
+                      class="button auto-action"
+                      type="button"
+                    >
+                      Reset image adjustments
+                    </button>
                     <div class="auto-recommendation">
                       <strong id="autoRecommendationTitle"
                         >Auto recommendation</strong
@@ -760,7 +804,7 @@
 
               <li>
                 <div>
-                  <h4>Tone adjustments</h4>
+                  <h4>Image tone adjustments</h4>
                   <div class="control-grid">
                     <div class="control full">
                       <label for="toneMode">Tone mode</label>
@@ -881,7 +925,7 @@
 
               <li>
                 <div>
-                  <h4>Range fitting</h4>
+                  <h4>Image range fitting</h4>
                   <div class="control-grid">
                     <div class="control">
                       <label for="dynamicRangeMode">Mode</label>
@@ -933,7 +977,7 @@
 
               <li>
                 <div>
-                  <h4>Dither and matching</h4>
+                  <h4>Canvas dithering and matching</h4>
                   <div class="control-grid">
                     <div class="control">
                       <label for="colorMatching">Matching</label>
@@ -1023,7 +1067,54 @@
           </fieldset>
 
           <fieldset>
-            <legend>
+            <legend><h3>Config and examples</h3></legend>
+            <div
+              class="config-tabs"
+              role="tablist"
+              aria-label="Config and code examples"
+            >
+              <button
+                id="configJsonTab"
+                class="config-tab"
+                type="button"
+                role="tab"
+                aria-controls="configJsonPanel"
+                aria-selected="true"
+                data-config-tab="configJson"
+              >
+                Config JSON
+              </button>
+              <button
+                id="jsExampleTab"
+                class="config-tab"
+                type="button"
+                role="tab"
+                aria-controls="jsExamplePanel"
+                aria-selected="false"
+                data-config-tab="jsExample"
+              >
+                JS example
+              </button>
+              <button
+                id="jsAdvancedExampleTab"
+                class="config-tab"
+                type="button"
+                role="tab"
+                aria-controls="jsAdvancedExamplePanel"
+                aria-selected="false"
+                data-config-tab="jsAdvancedExample"
+              >
+                JS advanced
+              </button>
+            </div>
+
+            <div
+              id="configJsonPanel"
+              class="config-block"
+              role="tabpanel"
+              aria-labelledby="configJsonTab"
+              data-config-panel="configJson"
+            >
               <div class="config-head">
                 <h3>Config JSON</h3>
                 <button
@@ -1045,16 +1136,21 @@
                   </svg>
                 </button>
               </div>
-            </legend>
-            <pre
-              id="configOutput"
-              class="config-output"
-              aria-label="Current JSON config"
-            ></pre>
-          </fieldset>
+              <pre
+                id="configOutput"
+                class="config-output"
+                aria-label="Current JSON config"
+              ></pre>
+            </div>
 
-          <fieldset>
-            <legend>
+            <div
+              id="jsExamplePanel"
+              class="config-block"
+              role="tabpanel"
+              aria-labelledby="jsExampleTab"
+              data-config-panel="jsExample"
+              hidden
+            >
               <div class="config-head">
                 <h3>JS Example</h3>
                 <button
@@ -1076,12 +1172,48 @@
                   </svg>
                 </button>
               </div>
-            </legend>
-            <pre
-              id="jsExampleOutput"
-              class="config-output js"
-              aria-label="Current JavaScript example"
-            ></pre>
+              <pre
+                id="jsExampleOutput"
+                class="config-output js"
+                aria-label="Current JavaScript example"
+              ></pre>
+            </div>
+
+            <div
+              id="jsAdvancedExamplePanel"
+              class="config-block"
+              role="tabpanel"
+              aria-labelledby="jsAdvancedExampleTab"
+              data-config-panel="jsAdvancedExample"
+              hidden
+            >
+              <div class="config-head">
+                <h3>JS Advanced</h3>
+                <button
+                  id="copyJsAdvancedExampleButton"
+                  class="icon-button"
+                  type="button"
+                  title="Copy advanced JavaScript example"
+                  aria-label="Copy advanced JavaScript example"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M8 8h10v12H8zM6 16H4V4h12v2"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <pre
+                id="jsAdvancedExampleOutput"
+                class="config-output js"
+                aria-label="Current advanced JavaScript example"
+              ></pre>
+            </div>
           </fieldset>
 
           <fieldset>

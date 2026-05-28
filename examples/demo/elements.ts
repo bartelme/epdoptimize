@@ -29,6 +29,18 @@ export const jsExampleOutput = $("jsExampleOutput") as HTMLPreElement;
 export const copyJsExampleButton = $(
   "copyJsExampleButton",
 ) as HTMLButtonElement;
+export const jsAdvancedExampleOutput = $(
+  "jsAdvancedExampleOutput",
+) as HTMLPreElement;
+export const copyJsAdvancedExampleButton = $(
+  "copyJsAdvancedExampleButton",
+) as HTMLButtonElement;
+export const configTabButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>("[data-config-tab]"),
+);
+export const configPanels = Array.from(
+  document.querySelectorAll<HTMLDivElement>("[data-config-panel]"),
+);
 export const screenResolutionSelect = $(
   "screenResolutionSelect",
 ) as HTMLSelectElement;
@@ -46,6 +58,12 @@ export const processingPresetSelect = $(
   "processingPreset",
 ) as HTMLSelectElement;
 export const autoFlowSelect = $("autoFlow") as HTMLSelectElement;
+export const autoAdjustmentsButton = $(
+  "autoAdjustmentsButton",
+) as HTMLButtonElement;
+export const resetImageAdjustmentsButton = $(
+  "resetImageAdjustmentsButton",
+) as HTMLButtonElement;
 export const ditheringTypeSelect = $("ditheringType") as HTMLSelectElement;
 export const errorDiffusionMatrixSelect = $(
   "errorDiffusionMatrix",

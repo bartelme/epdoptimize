@@ -8,7 +8,6 @@ import {
   deviceColorsCanvas,
   deviceTestStatus,
   imageFitSelect,
-  inputCanvas,
   orientationSelect,
   outputCanvas,
   paperIdInput,

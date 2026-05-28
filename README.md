@@ -123,6 +123,73 @@ const suggestion = suggestCanvasProcessingOptions(
 
 Available intents are `natural`, `vivid`, `readable`, `faithful`, and `lowNoise`.
 
+For editors, you can request the automatic values for each pipeline stage
+separately. These helpers do not mutate your canvas or UI state; they only
+return the calculated settings so you can apply them to your own image or
+canvas controls.
+
+```js
+import {
+  aitjcizeSpectra6Palette,
+  ditherImage,
+  replaceColors,
+  suggestCanvasDitherOptions,
+  suggestCanvasImageAdjustmentOptions,
+} from "epdoptimize";
+
+// Selected image/item stage: copy these values into the selected image settings.
+const imageAuto = suggestCanvasImageAdjustmentOptions(
+  selectedImageCanvas,
+  aitjcizeSpectra6Palette,
+);
+
+selectedImage.settings = {
+  ...selectedImage.settings,
+  ...imageAuto.adjustmentOptions,
+};
+
+// Canvas/export stage: copy these values into the global canvas dither settings.
+const canvasAuto = suggestCanvasDitherOptions(
+  composedCanvas,
+  aitjcizeSpectra6Palette,
+);
+
+canvas.settings = {
+  ...canvas.settings,
+  ...canvasAuto.ditherOptions,
+};
+
+await ditherImage(composedCanvas, ditheredCanvas, {
+  ...canvas.settings,
+  palette: aitjcizeSpectra6Palette,
+});
+
+replaceColors(ditheredCanvas, deviceCanvas, aitjcizeSpectra6Palette);
+```
+
+The split result shapes are:
+
+```ts
+type AutoImageAdjustmentOptions = {
+  toneMapping?: ToneMappingOptions;
+  dynamicRangeCompression?: DynamicRangeCompressionOptions | boolean;
+  levelCompression?: LevelCompressionOptions;
+  paperNormalization?: PaperNormalizationOptions;
+};
+
+type AutoCanvasDitherOptions = {
+  colorMatching?: ColorMatchingMode;
+  ditheringType?: DitheringType;
+  errorDiffusionMatrix?: string;
+  serpentine?: boolean;
+};
+```
+
+`suggestCanvasDitherOptions` intentionally does not return
+`processingPreset` inside `ditherOptions`, because presets can also imply image
+tone and range defaults. The recommended preset is available as metadata on
+`canvasAuto.presetName`.
+
 ## Palette Format
 
 Palettes live in [src/dither/data/default-palettes.json](src/dither/data/default-palettes.json). Each palette is an array of entries:
@@ -199,7 +266,7 @@ await ditherImage(inputCanvas, ditheredCanvas, {
 
 ## Demo Config
 
-The demo exposes a compact JSON config and a matching JS example. The generated config includes the selected palette export name and only the dither options that differ from defaults or preset values. When the demo's **Auto** preset is selected, Auto is resolved into concrete `ditherOptions`.
+The demo exposes a compact JSON config and a matching JS example. The generated config keeps image adjustments separate from canvas dithering, and includes only values that differ from neutral/default behavior. Auto selections are resolved into concrete options.
 
 ```js
 import {
@@ -210,16 +277,79 @@ import {
 
 const config = {
   palette: "aitjcizeSpectra6Palette",
-  ditherOptions: {
-    processingPreset: "dynamic",
-    errorDiffusionMatrix: "stucki",
+  imageAdjustmentOptions: {
+    toneMapping: {
+      mode: "scurve",
+      exposure: 1.05,
+      saturation: 1.3,
+      strength: 0.7,
+      shadowBoost: 0.05,
+      highlightCompress: 1.2,
+      midpoint: 0.5,
+    },
+  },
+  canvasDitherOptions: {
+    serpentine: true,
   },
 };
 
 const palette = aitjcizeSpectra6Palette;
 
 await ditherImage(inputCanvas, ditheredCanvas, {
-  ...config.ditherOptions,
+  ...config.imageAdjustmentOptions,
+  ...config.canvasDitherOptions,
+  palette,
+});
+
+replaceColors(ditheredCanvas, deviceCanvas, palette);
+```
+
+When the demo's **Auto** preset is active and the controls have not been
+manually edited, the generated JS example recalculates the automatic values:
+
+```js
+import {
+  ditherImage,
+  replaceColors,
+  suggestCanvasDitherOptions,
+  suggestCanvasImageAdjustmentOptions,
+  aitjcizeSpectra6Palette,
+} from "epdoptimize";
+
+const palette = aitjcizeSpectra6Palette;
+const imageAuto = suggestCanvasImageAdjustmentOptions(inputCanvas, palette);
+const canvasAuto = suggestCanvasDitherOptions(inputCanvas, palette);
+
+await ditherImage(inputCanvas, ditheredCanvas, {
+  ...imageAuto.adjustmentOptions,
+  ...canvasAuto.ditherOptions,
+  palette,
+});
+
+replaceColors(ditheredCanvas, deviceCanvas, palette);
+```
+
+For editors that need to render stages separately, the demo also includes a JS
+advanced example using the same config:
+
+```js
+import {
+  applyImageAdjustments,
+  ditherCanvas,
+  replaceColors,
+  aitjcizeSpectra6Palette,
+} from "epdoptimize";
+
+const palette = aitjcizeSpectra6Palette;
+const adjustedCanvas = document.createElement("canvas");
+
+await applyImageAdjustments(inputCanvas, adjustedCanvas, {
+  ...config.imageAdjustmentOptions,
+  palette,
+});
+
+await ditherCanvas(adjustedCanvas, ditheredCanvas, {
+  ...config.canvasDitherOptions,
   palette,
 });
 
@@ -247,6 +377,32 @@ await ditherImage(sourceCanvas, destinationCanvas, {
 ```
 
 Unsupported combinations currently fall back to the JavaScript implementation.
+
+### `applyImageAdjustments(sourceCanvas, destinationCanvas, options)`
+
+Runs only the image adjustment stage, including tone mapping, range fitting,
+level compression, and paper normalization.
+
+```js
+await applyImageAdjustments(sourceCanvas, adjustedCanvas, {
+  toneMapping,
+  dynamicRangeCompression,
+  palette,
+});
+```
+
+### `ditherCanvas(sourceCanvas, destinationCanvas, options)`
+
+Runs only the canvas dither and color matching stage. This is useful when image
+adjustments have already been applied per item or to an intermediate canvas.
+
+```js
+await ditherCanvas(adjustedCanvas, ditheredCanvas, {
+  ditheringType: "errorDiffusion",
+  errorDiffusionMatrix: "stucki",
+  palette,
+});
+```
 
 ### `replaceColors(sourceCanvas, destinationCanvas, palette)`
 

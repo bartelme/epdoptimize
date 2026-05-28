@@ -339,19 +339,7 @@ const getPresetDefaults = (presetName: ProcessingPresetName | undefined) => {
   } satisfies Partial<DitherImageOptions>;
 };
 
-const ditherImage = async (
-  sourceCanvas: CanvasLike,
-  canvas: CanvasLike,
-  opts: DitherImageOptions = {}
-): Promise<CanvasLike | undefined> => {
-  if (!sourceCanvas || !canvas) {
-    return;
-  }
-
-  const ctx = sourceCanvas.getContext("2d");
-  if (!ctx) return;
-  const image = ctx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
-
+const getResolvedDitherOptions = (opts: DitherImageOptions = {}) => {
   const options: DitherImageOptions & typeof defaultOptions = {
     ...defaultOptions,
     ...getPresetDefaults(opts.processingPreset),
@@ -363,23 +351,47 @@ const ditherImage = async (
     options.errorDiffusionMatrix = opts.algorithm;
   }
 
-  const width = image.width;
-  const height = image.height;
-  let colorPalette: RGB[] = [];
+  return options;
+};
 
+const getCanvasImageData = (sourceCanvas: CanvasLike) => {
+  const ctx = sourceCanvas.getContext("2d");
+  if (!ctx) return null;
+  return ctx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+};
+
+const getColorPaletteFromOptions = (
+  options: DitherImageOptions & typeof defaultOptions
+) => {
   if (!options.palette || options.sampleColorsFromImage === true) {
-    // colorPalette = colorPaletteFromImage(image, options.numberOfSampleColors);
-  } else {
-    colorPalette = setColorPalette(options.palette);
+    // return colorPaletteFromImage(image, options.numberOfSampleColors);
+    return [];
   }
 
+  return setColorPalette(options.palette);
+};
+
+const applyImageAdjustmentsToImageData = (
+  image: ImageDataLike,
+  options: DitherImageOptions & typeof defaultOptions,
+  colorPalette: RGB[]
+) => {
   applyImageProcessing(image, mergeImageProcessingOptions(options), colorPalette);
 
   if (options.levelCompression) {
     applyLevelCompression(image, options.levelCompression);
   }
+};
 
-  function setPixel(pixelIndex, pixel) {
+const ditherImageData = async (
+  image: ImageDataLike,
+  options: DitherImageOptions & typeof defaultOptions,
+  colorPalette: RGB[]
+) => {
+  const width = image.width;
+  const height = image.height;
+
+  function setPixel(pixelIndex: number, pixel: RGBA) {
     image.data[pixelIndex] = pixel[0];
     image.data[pixelIndex + 1] = pixel[1];
     image.data[pixelIndex + 2] = pixel[2];
@@ -391,7 +403,9 @@ const ditherImage = async (
     options.orderedDitheringMatrix[1],
   ]);
 
-  let current, newPixel, oldPixel;
+  let current: number;
+  let newPixel: RGBA;
+  let oldPixel: RGBA;
   const hueMixPalette = getHueMixPalette(colorPalette);
 
   for (current = 0; current < image.data.length; current += 4) {
@@ -484,6 +498,56 @@ const ditherImage = async (
       );
     }
   }
+};
+
+const applyImageAdjustments = async (
+  sourceCanvas: CanvasLike,
+  canvas: CanvasLike,
+  opts: DitherImageOptions = {}
+): Promise<CanvasLike | undefined> => {
+  if (!sourceCanvas || !canvas) return;
+
+  const image = getCanvasImageData(sourceCanvas);
+  if (!image) return;
+
+  const options = getResolvedDitherOptions(opts);
+  const colorPalette = getColorPaletteFromOptions(options);
+  applyImageAdjustmentsToImageData(image, options, colorPalette);
+
+  return imageDataToCanvas(image, canvas);
+};
+
+const ditherCanvas = async (
+  sourceCanvas: CanvasLike,
+  canvas: CanvasLike,
+  opts: DitherImageOptions = {}
+): Promise<CanvasLike | undefined> => {
+  if (!sourceCanvas || !canvas) return;
+
+  const image = getCanvasImageData(sourceCanvas);
+  if (!image) return;
+
+  const options = getResolvedDitherOptions(opts);
+  const colorPalette = getColorPaletteFromOptions(options);
+  await ditherImageData(image, options, colorPalette);
+
+  return imageDataToCanvas(image, canvas);
+};
+
+const ditherImage = async (
+  sourceCanvas: CanvasLike,
+  canvas: CanvasLike,
+  opts: DitherImageOptions = {}
+): Promise<CanvasLike | undefined> => {
+  if (!sourceCanvas || !canvas) return;
+
+  const image = getCanvasImageData(sourceCanvas);
+  if (!image) return;
+
+  const options = getResolvedDitherOptions(opts);
+  const colorPalette = getColorPaletteFromOptions(options);
+  applyImageAdjustmentsToImageData(image, options, colorPalette);
+  await ditherImageData(image, options, colorPalette);
 
   return imageDataToCanvas(image, canvas);
 };
@@ -895,4 +959,4 @@ const imageDataToCanvas = (imageData: ImageDataLike, canvas: CanvasLike) => {
   return canvas;
 };
 
-export { ditherImage };
+export { applyImageAdjustments, ditherCanvas, ditherImage };

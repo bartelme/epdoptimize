@@ -15,7 +15,8 @@ export type AutoRatingIssue =
 
 export interface DemoConfig {
   palette: string;
-  ditherOptions: Record<string, unknown>;
+  imageAdjustmentOptions: Record<string, unknown>;
+  canvasDitherOptions: Record<string, unknown>;
 }
 
 export interface AutoProcessingRatingRecord {

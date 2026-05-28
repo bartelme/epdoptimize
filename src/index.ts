@@ -78,7 +78,11 @@ export type {
   ReplaceColorsPalette,
 } from "./replaceColors/replaceColors";
 
-export { ditherImage } from "./dither/dither";
+export {
+  applyImageAdjustments,
+  ditherCanvas,
+  ditherImage,
+} from "./dither/dither";
 export {
   getProcessingPreset,
   getProcessingPresetNames,
@@ -92,8 +96,12 @@ export {
   isPhotoImage,
 } from "./image-style";
 export {
+  suggestCanvasDitherOptions,
+  suggestCanvasImageAdjustmentOptions,
   suggestLayeredCanvasProcessingOptions,
   suggestLayeredProcessingOptions,
+  suggestDitherOptions,
+  suggestImageAdjustmentOptions,
   suggestCanvasProcessingOptions,
   suggestProcessingOptions,
 } from "./auto-processing";
@@ -103,6 +111,7 @@ export type {
   CanvasLike,
   DitherImageOptions,
   DitherProcessingEngine,
+  DitheringType,
   DynamicRangeCompressionOptions,
   ImageDataLike,
   ImageProcessingOptions,
@@ -122,6 +131,10 @@ export type {
   ImageStyleMetrics,
 } from "./image-style";
 export type {
+  AutoCanvasDitherOptions,
+  AutoCanvasDitherSuggestion,
+  AutoImageAdjustmentOptions,
+  AutoImageAdjustmentSuggestion,
   AutoProcessingIntent,
   ProcessingPipelineStep,
   ProcessingSuggestion,

@@ -3,10 +3,15 @@ import {
   getProcessingPreset,
   getProcessingPresetOptions,
   replaceColors,
+  suggestCanvasDitherOptions,
+  suggestCanvasImageAdjustmentOptions,
   suggestLayeredCanvasProcessingOptions,
   suggestCanvasProcessingOptions,
 } from "../src";
 import type {
+  AutoCanvasDitherSuggestion,
+  AutoImageAdjustmentOptions,
+  AutoImageAdjustmentSuggestion,
   DitherImageOptions,
   DitherProcessingEngine,
   ImageStyleClassification,
@@ -28,6 +33,7 @@ import {
   testOnDevice,
 } from "./demo/device-test";
 import {
+  autoAdjustmentsButton,
   apiKeyInput,
   autoRecommendationReasons,
   autoRecommendationTitle,
@@ -35,9 +41,12 @@ import {
   canvasFrames,
   canvasGrid,
   colorMatchingSelect,
+  configPanels,
+  configTabButtons,
   configOutput,
   contrastInput,
   copyConfigButton,
+  copyJsAdvancedExampleButton,
   copyJsExampleButton,
   deviceColorsCanvas,
   deviceColorsPreview,
@@ -56,6 +65,7 @@ import {
   imageStyleMetrics,
   imageStyleValue,
   inputCanvas,
+  jsAdvancedExampleOutput,
   jsExampleOutput,
   lowPercentileInput,
   midpointInput,
@@ -69,6 +79,7 @@ import {
   processingEngineSelect,
   processingPresetSelect,
   randomDitheringTypeSelect,
+  resetImageAdjustmentsButton,
   sampleImageGrid,
   saturationInput,
   screenResolutionSelect,
@@ -110,7 +121,6 @@ const sampleImagePreviews = import.meta.glob(
 
 let lastImage: HTMLImageElement | null = null;
 let selectedSampleUrl = "";
-let currentImageName = "";
 const sampleNameByUrl = new Map<string, string>();
 let scheduledProcess = 0;
 let processToken = 0;
@@ -118,6 +128,8 @@ let showOriginalSize = false;
 let currentProcessingSuggestion: ProcessingSuggestion | null = null;
 let previousAutoSuggestion: ProcessingSuggestion | null = null;
 let layeredAutoSuggestion: ProcessingSuggestion | null = null;
+let layeredImageAdjustmentSuggestion: AutoImageAdjustmentSuggestion | null = null;
+let layeredCanvasDitherSuggestion: AutoCanvasDitherSuggestion | null = null;
 let autoControlsDirty = false;
 let workerRequestId = 0;
 let processingWorker: Worker | null = null;
@@ -127,9 +139,36 @@ let autoAnalysisCache:
       key: string;
       previous: ProcessingSuggestion;
       layered: ProcessingSuggestion;
+      imageAdjustments: AutoImageAdjustmentSuggestion;
+      canvasDither: AutoCanvasDitherSuggestion;
     }
   | null = null;
 let syncingCanvasScroll = false;
+
+const FULL_AUTO_PRESET_VALUE = "auto";
+const AUTO_DITHER_PRESET_VALUE = "autoDitherManual";
+const AUTO_DITHER_CONTROL_IDS = new Set([
+  "ditheringType",
+  "errorDiffusionMatrix",
+  "orderedDitheringMatrixW",
+  "orderedDitheringMatrixH",
+  "randomDitheringType",
+  "serpentine",
+  "colorMatching",
+  "processingEngine",
+]);
+
+function isFullAutoPreset() {
+  return processingPresetSelect.value === FULL_AUTO_PRESET_VALUE;
+}
+
+function isAutoDitherPreset() {
+  return processingPresetSelect.value === AUTO_DITHER_PRESET_VALUE;
+}
+
+function usesAutoAnalysisPreset() {
+  return isFullAutoPreset() || isAutoDitherPreset();
+}
 
 window.addEventListener("DOMContentLoaded", async () => {
   populateSampleImageOptions();
@@ -246,9 +285,14 @@ function updateSelectedSampleButton() {
 function populateProcessingPresetOptions() {
   processingPresetSelect.innerHTML = "";
   const autoOption = document.createElement("option");
-  autoOption.value = "auto";
+  autoOption.value = FULL_AUTO_PRESET_VALUE;
   autoOption.textContent = "Auto";
   processingPresetSelect.append(autoOption);
+
+  const autoDitherOption = document.createElement("option");
+  autoDitherOption.value = AUTO_DITHER_PRESET_VALUE;
+  autoDitherOption.textContent = "Auto canvas dither (manual image adjustments)";
+  processingPresetSelect.append(autoDitherOption);
 
   for (const preset of getProcessingPresetOptions()) {
     const option = document.createElement("option");
@@ -256,7 +300,7 @@ function populateProcessingPresetOptions() {
     option.textContent = preset.title;
     processingPresetSelect.append(option);
   }
-  processingPresetSelect.value = "auto";
+  processingPresetSelect.value = FULL_AUTO_PRESET_VALUE;
 }
 
 async function loadImage(src: string) {
@@ -269,7 +313,6 @@ async function loadImage(src: string) {
 async function loadSelectedSampleImage() {
   const src =
     selectedSampleUrl || import.meta.env.BASE_URL + "example-dither.jpg";
-  currentImageName = sampleNameByUrl.get(src) ?? "Sample image";
   lastImage = await loadImage(src);
   autoControlsDirty = false;
   await processImage();
@@ -368,8 +411,29 @@ function setSelectValue(select: HTMLSelectElement, value: string | undefined) {
   }
 }
 
+function applyManualAdjustmentDefaultsToUI() {
+  toneModeSelect.value = "off";
+  setResolvedInputValue(exposureInput, undefined, 1);
+  setResolvedInputValue(saturationInput, undefined, 1);
+  setResolvedInputValue(contrastInput, undefined, 1);
+  setResolvedInputValue(scurveStrengthInput, undefined, 0.9);
+  setResolvedInputValue(shadowBoostInput, undefined, 0);
+  setResolvedInputValue(highlightCompressInput, undefined, 1.5);
+  setResolvedInputValue(midpointInput, undefined, 0.5);
+
+  dynamicRangeModeSelect.value = "off";
+  setResolvedInputValue(dynamicRangeStrengthInput, undefined, 1);
+  setResolvedInputValue(lowPercentileInput, undefined, 0.01);
+  setResolvedInputValue(highPercentileInput, undefined, 0.99);
+}
+
 function applyPresetToUI(name: string) {
-  if (name === "auto") return;
+  if (name === FULL_AUTO_PRESET_VALUE) return;
+
+  if (name === AUTO_DITHER_PRESET_VALUE) {
+    applyManualAdjustmentDefaultsToUI();
+    return;
+  }
 
   const preset = getProcessingPreset(name);
   if (!preset) return;
@@ -395,16 +459,11 @@ function applyPresetToUI(name: string) {
   }
 }
 
-function applyResolvedDitherOptionsToUI(options: Partial<DitherImageOptions>) {
+function applyAutoDitherAndMatchingToUI(options: Partial<DitherImageOptions>) {
   const preset =
     typeof options.processingPreset === "string"
       ? getProcessingPreset(options.processingPreset)
       : null;
-  const toneMapping = options.toneMapping ?? preset?.toneMapping;
-  const dynamicRangeCompression =
-    typeof options.dynamicRangeCompression === "object"
-      ? options.dynamicRangeCompression
-      : preset?.dynamicRangeCompression;
 
   setSelectValue(
     ditheringTypeSelect,
@@ -438,6 +497,18 @@ function applyResolvedDitherOptionsToUI(options: Partial<DitherImageOptions>) {
     DEFAULT_DITHER_OPTIONS.orderedDitheringMatrix;
   orderedDitheringMatrixW.value = String(orderedDitheringMatrix[0] ?? 4);
   orderedDitheringMatrixH.value = String(orderedDitheringMatrix[1] ?? 4);
+}
+
+function applyAutoAdjustmentsToUI(options: Partial<DitherImageOptions>) {
+  const preset =
+    typeof options.processingPreset === "string"
+      ? getProcessingPreset(options.processingPreset)
+      : null;
+  const toneMapping = options.toneMapping ?? preset?.toneMapping;
+  const dynamicRangeCompression =
+    typeof options.dynamicRangeCompression === "object"
+      ? options.dynamicRangeCompression
+      : preset?.dynamicRangeCompression;
 
   toneModeSelect.value = toneMapping?.mode ?? "off";
   setResolvedInputValue(exposureInput, toneMapping?.exposure, 1);
@@ -468,6 +539,11 @@ function applyResolvedDitherOptionsToUI(options: Partial<DitherImageOptions>) {
     dynamicRangeCompression?.highPercentile,
     0.99,
   );
+}
+
+function applyResolvedDitherOptionsToUI(options: Partial<DitherImageOptions>) {
+  applyAutoDitherAndMatchingToUI(options);
+  applyAutoAdjustmentsToUI(options);
 }
 
 function readNumber(input: HTMLInputElement, fallback: number) {
@@ -543,9 +619,8 @@ function getDynamicRangeCompressionFromUI() {
   };
 }
 
-function getDitherOptionsFromUI(palette: PaletteColorEntry[]) {
+function getCanvasDitherOptionsFromUI(palette: PaletteColorEntry[]) {
   return {
-    processingPreset: processingPresetSelect.value,
     ditheringType: ditheringTypeSelect.value,
     errorDiffusionMatrix: errorDiffusionMatrixSelect.value,
     serpentine: serpentineCheckbox.checked,
@@ -558,8 +633,21 @@ function getDitherOptionsFromUI(palette: PaletteColorEntry[]) {
     colorMatching: colorMatchingSelect.value as DitherImageOptions["colorMatching"],
     processingEngine: processingEngineSelect.value as DitherProcessingEngine,
     calibrate: true,
+  };
+}
+
+function getImageAdjustmentOptionsFromUI(): AutoImageAdjustmentOptions {
+  return {
     toneMapping: getToneMappingFromUI(),
     dynamicRangeCompression: getDynamicRangeCompressionFromUI(),
+  };
+}
+
+function getDitherOptionsFromUI(palette: PaletteColorEntry[]) {
+  return {
+    processingPreset: processingPresetSelect.value,
+    ...getCanvasDitherOptionsFromUI(palette),
+    ...getImageAdjustmentOptionsFromUI(),
   };
 }
 
@@ -567,6 +655,50 @@ function getSelectedAutoSuggestion() {
   return autoFlowSelect.value === "previous"
     ? previousAutoSuggestion
     : layeredAutoSuggestion;
+}
+
+function pickImageAdjustmentOptions(
+  options: Partial<DitherImageOptions> | undefined,
+): AutoImageAdjustmentOptions {
+  return {
+    ...(options?.toneMapping ? { toneMapping: options.toneMapping } : {}),
+    ...(options?.dynamicRangeCompression
+      ? { dynamicRangeCompression: options.dynamicRangeCompression }
+      : {}),
+    ...(options?.levelCompression
+      ? { levelCompression: options.levelCompression }
+      : {}),
+    ...(options?.paperNormalization
+      ? { paperNormalization: options.paperNormalization }
+      : {}),
+  };
+}
+
+function pickCanvasDitherOptions(
+  options: Partial<DitherImageOptions> | undefined,
+): Partial<DitherImageOptions> {
+  return {
+    ...(options?.ditheringType ? { ditheringType: options.ditheringType } : {}),
+    ...(options?.errorDiffusionMatrix
+      ? { errorDiffusionMatrix: options.errorDiffusionMatrix }
+      : {}),
+    ...(typeof options?.serpentine === "boolean"
+      ? { serpentine: options.serpentine }
+      : {}),
+    ...(options?.colorMatching ? { colorMatching: options.colorMatching } : {}),
+  };
+}
+
+function getSelectedAutoImageAdjustmentOptions() {
+  return autoFlowSelect.value === "previous"
+    ? pickImageAdjustmentOptions(previousAutoSuggestion?.ditherOptions)
+    : (layeredImageAdjustmentSuggestion?.adjustmentOptions ?? {});
+}
+
+function getSelectedAutoCanvasDitherOptions() {
+  return autoFlowSelect.value === "previous"
+    ? pickCanvasDitherOptions(previousAutoSuggestion?.ditherOptions)
+    : (layeredCanvasDitherSuggestion?.ditherOptions ?? {});
 }
 
 function getAutoAnalysisCacheKey() {
@@ -598,7 +730,18 @@ function getAutoAnalysisSuggestions(palette: PaletteColorEntry[]) {
 
   const previous = suggestCanvasProcessingOptions(inputCanvas, palette);
   const layered = suggestLayeredCanvasProcessingOptions(inputCanvas, palette);
-  autoAnalysisCache = { key, previous, layered };
+  const imageAdjustments = suggestCanvasImageAdjustmentOptions(
+    inputCanvas,
+    palette,
+  );
+  const canvasDither = suggestCanvasDitherOptions(inputCanvas, palette);
+  autoAnalysisCache = {
+    key,
+    previous,
+    layered,
+    imageAdjustments,
+    canvasDither,
+  };
   return autoAnalysisCache;
 }
 
@@ -624,142 +767,96 @@ function getAutoDitherOptionsFromUI(palette: PaletteColorEntry[]) {
   };
 }
 
-function isToneMappingPresetValue() {
-  const preset = getProcessingPreset(processingPresetSelect.value);
-  if (!preset) return false;
+function getAutoDitherWithManualAdjustmentsOptionsFromUI(
+  palette: PaletteColorEntry[],
+) {
+  return {
+    ...getCanvasDitherOptionsFromUI(palette),
+    ...getImageAdjustmentOptionsFromUI(),
+  };
+}
 
-  const current = getToneMappingFromUI();
-  const presetToneMapping = preset.toneMapping;
-  const presetMode = presetToneMapping.mode ?? "contrast";
+function isToneMappingNeutral(toneMapping: DitherImageOptions["toneMapping"]) {
+  if (!toneMapping) return true;
 
-  if (
-    current.mode !== presetMode ||
-    !numbersEqual(current.exposure, presetToneMapping.exposure ?? 1) ||
-    !numbersEqual(current.saturation, presetToneMapping.saturation ?? 1)
-  ) {
+  const mode = toneMapping.mode ?? "contrast";
+  const exposure = toneMapping.exposure ?? 1;
+  const saturation = toneMapping.saturation ?? 1;
+
+  if (!numbersEqual(exposure, 1) || !numbersEqual(saturation, 1)) {
     return false;
   }
 
-  if (presetMode === "contrast") {
-    return numbersEqual(current.contrast, presetToneMapping.contrast ?? 1);
+  if (mode === "off") return true;
+  if (mode === "contrast") {
+    return numbersEqual(toneMapping.contrast ?? 1, 1);
   }
 
-  if (presetMode === "scurve") {
-    return (
-      numbersEqual(current.strength, presetToneMapping.strength ?? 0.9) &&
-      numbersEqual(current.shadowBoost, presetToneMapping.shadowBoost ?? 0) &&
-      numbersEqual(
-        current.highlightCompress,
-        presetToneMapping.highlightCompress ?? 1.5,
-      ) &&
-      numbersEqual(current.midpoint, presetToneMapping.midpoint ?? 0.5)
-    );
-  }
-
-  return true;
+  return false;
 }
 
-function isDynamicRangePresetValue() {
-  const preset = getProcessingPreset(processingPresetSelect.value);
-  if (!preset) return false;
-
-  const current = getDynamicRangeCompressionFromUI();
-  const presetRange = preset.dynamicRangeCompression ?? {
-    mode: "off" as const,
-  };
-  const presetMode = presetRange.mode ?? "off";
-
-  if (current.mode !== presetMode) return false;
-  if (presetMode === "off") return true;
-
-  if (!numbersEqual(current.strength, presetRange.strength ?? 1)) {
-    return false;
-  }
-
-  if (presetMode === "auto") {
-    return (
-      numbersEqual(current.lowPercentile, presetRange.lowPercentile ?? 0.01) &&
-      numbersEqual(current.highPercentile, presetRange.highPercentile ?? 0.99)
-    );
-  }
-
-  return true;
+function isDynamicRangeNeutral(
+  dynamicRangeCompression: DitherImageOptions["dynamicRangeCompression"],
+) {
+  if (!dynamicRangeCompression) return true;
+  if (dynamicRangeCompression === true) return false;
+  return (dynamicRangeCompression.mode ?? "off") === "off";
 }
 
-function getConfigDitherOptionsFromUI() {
-  if (processingPresetSelect.value === "auto") {
-    if (autoControlsDirty) {
-      const { palette: _palette, calibrate: _calibrate, ...options } =
-        getAutoDitherOptionsFromUI(getSelectedPaletteOption().palette);
-      return getCompactDitherOptions(options);
-    }
+function getCompactImageAdjustmentOptions(
+  options: AutoImageAdjustmentOptions,
+) {
+  const configOptions: Record<string, unknown> = {};
 
-    return currentProcessingSuggestion
-      ? getCompactDitherOptions(currentProcessingSuggestion.ditherOptions)
-      : { processingPreset: "balanced" };
+  if (!isToneMappingNeutral(options.toneMapping)) {
+    configOptions.toneMapping = options.toneMapping;
   }
 
-  const preset = getProcessingPreset(processingPresetSelect.value);
-  const orderedDitheringMatrix = [
-    parseInt(orderedDitheringMatrixW.value, 10),
-    parseInt(orderedDitheringMatrixH.value, 10),
-  ];
-  const configOptions: Record<string, unknown> = {
-    processingPreset: processingPresetSelect.value,
-  };
-
-  if (ditheringTypeSelect.value !== DEFAULT_DITHER_OPTIONS.ditheringType) {
-    configOptions.ditheringType = ditheringTypeSelect.value;
+  if (!isDynamicRangeNeutral(options.dynamicRangeCompression)) {
+    configOptions.dynamicRangeCompression = options.dynamicRangeCompression;
   }
 
-  if (serpentineCheckbox.checked !== DEFAULT_DITHER_OPTIONS.serpentine) {
-    configOptions.serpentine = serpentineCheckbox.checked;
+  if (options.levelCompression) {
+    configOptions.levelCompression = options.levelCompression;
   }
 
-  if (
-    !numberArraysEqual(
-      orderedDitheringMatrix,
-      DEFAULT_DITHER_OPTIONS.orderedDitheringMatrix,
-    )
-  ) {
-    configOptions.orderedDitheringMatrix = orderedDitheringMatrix;
-  }
-
-  if (
-    randomDitheringTypeSelect.value !==
-    DEFAULT_DITHER_OPTIONS.randomDitheringType
-  ) {
-    configOptions.randomDitheringType = randomDitheringTypeSelect.value;
-  }
-
-  if (
-    colorMatchingSelect.value !==
-    (preset?.colorMatching ?? DEFAULT_DITHER_OPTIONS.colorMatching)
-  ) {
-    configOptions.colorMatching = colorMatchingSelect.value;
-  }
-
-  if (processingEngineSelect.value !== DEFAULT_DITHER_OPTIONS.processingEngine) {
-    configOptions.processingEngine = processingEngineSelect.value;
-  }
-
-  if (
-    errorDiffusionMatrixSelect.value !==
-    (preset?.errorDiffusionMatrix ??
-      DEFAULT_DITHER_OPTIONS.errorDiffusionMatrix)
-  ) {
-    configOptions.errorDiffusionMatrix = errorDiffusionMatrixSelect.value;
-  }
-
-  if (!isToneMappingPresetValue()) {
-    configOptions.toneMapping = getToneMappingFromUI();
-  }
-
-  if (!isDynamicRangePresetValue()) {
-    configOptions.dynamicRangeCompression = getDynamicRangeCompressionFromUI();
+  if (options.paperNormalization) {
+    configOptions.paperNormalization = options.paperNormalization;
   }
 
   return configOptions;
+}
+
+function getConfigImageAdjustmentOptionsFromUI() {
+  if (isFullAutoPreset() && !autoControlsDirty) {
+    return getCompactImageAdjustmentOptions(
+      getSelectedAutoImageAdjustmentOptions(),
+    );
+  }
+
+  return getCompactImageAdjustmentOptions(getImageAdjustmentOptionsFromUI());
+}
+
+function getConfigCanvasDitherOptionsFromUI() {
+  if (isFullAutoPreset()) {
+    if (autoControlsDirty) {
+      const { palette: _palette, calibrate: _calibrate, ...options } =
+        getCanvasDitherOptionsFromUI(getSelectedPaletteOption().palette);
+      return getCompactDitherOptions(options);
+    }
+
+    return getCompactDitherOptions(getSelectedAutoCanvasDitherOptions());
+  }
+
+  if (isAutoDitherPreset()) {
+    const { palette: _palette, calibrate: _calibrate, ...options } =
+      getCanvasDitherOptionsFromUI(getSelectedPaletteOption().palette);
+    return getCompactDitherOptions(options);
+  }
+
+  const { palette: _palette, calibrate: _calibrate, ...options } =
+    getCanvasDitherOptionsFromUI(getSelectedPaletteOption().palette);
+  return getCompactDitherOptions(options);
 }
 
 function getCompactDitherOptions(options: Partial<DitherImageOptions>) {
@@ -853,7 +950,8 @@ function getDemoConfig(): DemoConfig {
 
   return {
     palette: selectedPalette.exportName,
-    ditherOptions: getConfigDitherOptionsFromUI(),
+    imageAdjustmentOptions: getConfigImageAdjustmentOptionsFromUI(),
+    canvasDitherOptions: getConfigCanvasDitherOptionsFromUI(),
   };
 }
 
@@ -861,8 +959,125 @@ function updateConfigOutput() {
   const config = getDemoConfig();
   const configJson = JSON.stringify(config, null, 2);
   const paletteExportName = getSelectedPaletteOption().exportName;
+  const shouldSuggestFullAuto = isFullAutoPreset() && !autoControlsDirty;
+  const shouldSuggestCanvasDither = isAutoDitherPreset() && !autoControlsDirty;
 
   configOutput.textContent = configJson;
+
+  if (shouldSuggestFullAuto) {
+    jsExampleOutput.textContent = `import {
+  ditherImage,
+  replaceColors,
+  suggestCanvasDitherOptions,
+  suggestCanvasImageAdjustmentOptions,
+  ${paletteExportName},
+} from "epdoptimize";
+
+const palette = ${paletteExportName};
+
+const inputCanvas = document.querySelector("#inputCanvas");
+const ditheredCanvas = document.querySelector("#ditheredCanvas");
+const deviceCanvas = document.querySelector("#deviceCanvas");
+
+const imageAuto = suggestCanvasImageAdjustmentOptions(inputCanvas, palette);
+const canvasAuto = suggestCanvasDitherOptions(inputCanvas, palette);
+
+await ditherImage(inputCanvas, ditheredCanvas, {
+  ...imageAuto.adjustmentOptions,
+  ...canvasAuto.ditherOptions,
+  palette,
+});
+replaceColors(ditheredCanvas, deviceCanvas, palette);`;
+
+    jsAdvancedExampleOutput.textContent = `import {
+  applyImageAdjustments,
+  ditherCanvas,
+  replaceColors,
+  suggestCanvasDitherOptions,
+  suggestCanvasImageAdjustmentOptions,
+  ${paletteExportName},
+} from "epdoptimize";
+
+const palette = ${paletteExportName};
+
+const inputCanvas = document.querySelector("#inputCanvas");
+const adjustedCanvas = document.createElement("canvas");
+const ditheredCanvas = document.querySelector("#ditheredCanvas");
+const deviceCanvas = document.querySelector("#deviceCanvas");
+
+const imageAuto = suggestCanvasImageAdjustmentOptions(inputCanvas, palette);
+const canvasAuto = suggestCanvasDitherOptions(inputCanvas, palette);
+
+await applyImageAdjustments(inputCanvas, adjustedCanvas, {
+  ...imageAuto.adjustmentOptions,
+  palette,
+});
+
+await ditherCanvas(adjustedCanvas, ditheredCanvas, {
+  ...canvasAuto.ditherOptions,
+  palette,
+});
+
+replaceColors(ditheredCanvas, deviceCanvas, palette);`;
+    return;
+  }
+
+  if (shouldSuggestCanvasDither) {
+    jsExampleOutput.textContent = `import {
+  ditherImage,
+  replaceColors,
+  suggestCanvasDitherOptions,
+  ${paletteExportName},
+} from "epdoptimize";
+
+const config = ${configJson};
+const palette = ${paletteExportName};
+
+const inputCanvas = document.querySelector("#inputCanvas");
+const ditheredCanvas = document.querySelector("#ditheredCanvas");
+const deviceCanvas = document.querySelector("#deviceCanvas");
+
+const canvasAuto = suggestCanvasDitherOptions(inputCanvas, palette);
+
+await ditherImage(inputCanvas, ditheredCanvas, {
+  ...config.imageAdjustmentOptions,
+  ...canvasAuto.ditherOptions,
+  palette,
+});
+replaceColors(ditheredCanvas, deviceCanvas, palette);`;
+
+    jsAdvancedExampleOutput.textContent = `import {
+  applyImageAdjustments,
+  ditherCanvas,
+  replaceColors,
+  suggestCanvasDitherOptions,
+  ${paletteExportName},
+} from "epdoptimize";
+
+const config = ${configJson};
+const palette = ${paletteExportName};
+
+const inputCanvas = document.querySelector("#inputCanvas");
+const adjustedCanvas = document.createElement("canvas");
+const ditheredCanvas = document.querySelector("#ditheredCanvas");
+const deviceCanvas = document.querySelector("#deviceCanvas");
+
+const canvasAuto = suggestCanvasDitherOptions(inputCanvas, palette);
+
+await applyImageAdjustments(inputCanvas, adjustedCanvas, {
+  ...config.imageAdjustmentOptions,
+  palette,
+});
+
+await ditherCanvas(adjustedCanvas, ditheredCanvas, {
+  ...canvasAuto.ditherOptions,
+  palette,
+});
+
+replaceColors(ditheredCanvas, deviceCanvas, palette);`;
+    return;
+  }
+
   jsExampleOutput.textContent = `import {
   ditherImage,
   replaceColors,
@@ -877,9 +1092,37 @@ const ditheredCanvas = document.querySelector("#ditheredCanvas");
 const deviceCanvas = document.querySelector("#deviceCanvas");
 
 await ditherImage(inputCanvas, ditheredCanvas, {
-  ...config.ditherOptions,
+  ...config.imageAdjustmentOptions,
+  ...config.canvasDitherOptions,
   palette,
 });
+replaceColors(ditheredCanvas, deviceCanvas, palette);`;
+
+  jsAdvancedExampleOutput.textContent = `import {
+  applyImageAdjustments,
+  ditherCanvas,
+  replaceColors,
+  ${paletteExportName},
+} from "epdoptimize";
+
+const config = ${configJson};
+const palette = ${paletteExportName};
+
+const inputCanvas = document.querySelector("#inputCanvas");
+const adjustedCanvas = document.createElement("canvas");
+const ditheredCanvas = document.querySelector("#ditheredCanvas");
+const deviceCanvas = document.querySelector("#deviceCanvas");
+
+await applyImageAdjustments(inputCanvas, adjustedCanvas, {
+  ...config.imageAdjustmentOptions,
+  palette,
+});
+
+await ditherCanvas(adjustedCanvas, ditheredCanvas, {
+  ...config.canvasDitherOptions,
+  palette,
+});
+
 replaceColors(ditheredCanvas, deviceCanvas, palette);`;
 }
 
@@ -948,21 +1191,21 @@ function updateAutoRecommendation(suggestion: ProcessingSuggestion | null) {
   }
 
   const { ditherOptions } = suggestion;
-  autoRecommendationTitle.textContent = `${formatPresetName(
-    suggestion.strategy ?? "auto",
-  )} auto: ${formatPresetName(
-    ditherOptions.processingPreset,
-  )}`;
+  autoRecommendationTitle.textContent = isAutoDitherPreset()
+    ? `${formatPresetName(suggestion.strategy ?? "auto")} auto: canvas dithering`
+    : `${formatPresetName(suggestion.strategy ?? "auto")} auto: ${formatPresetName(
+        ditherOptions.processingPreset,
+      )}`;
 
   autoRecommendationReasons.replaceChildren(
     ...suggestion.reasons
       .filter((reason) => !reason.startsWith("Detected "))
       .slice(0, 3)
       .map((reason) => {
-      const item = document.createElement("li");
-      item.textContent = reason;
-      return item;
-    }),
+        const item = document.createElement("li");
+        item.textContent = reason;
+        return item;
+      }),
   );
 }
 
@@ -1087,14 +1330,23 @@ async function processImage() {
   const autoSuggestions = getAutoAnalysisSuggestions(palette);
   previousAutoSuggestion = autoSuggestions.previous;
   layeredAutoSuggestion = autoSuggestions.layered;
+  layeredImageAdjustmentSuggestion = autoSuggestions.imageAdjustments;
+  layeredCanvasDitherSuggestion = autoSuggestions.canvasDither;
   currentProcessingSuggestion = getSelectedAutoSuggestion();
 
   if (
     currentProcessingSuggestion &&
-    processingPresetSelect.value === "auto" &&
+    isFullAutoPreset() &&
     !autoControlsDirty
   ) {
     applyResolvedDitherOptionsToUI(currentProcessingSuggestion.ditherOptions);
+  }
+  if (
+    currentProcessingSuggestion &&
+    isAutoDitherPreset() &&
+    !autoControlsDirty
+  ) {
+    applyAutoDitherAndMatchingToUI(getSelectedAutoCanvasDitherOptions());
   }
   if (!currentProcessingSuggestion) return;
   updateImageStyleResult(currentProcessingSuggestion.classification);
@@ -1103,8 +1355,10 @@ async function processImage() {
   updateConfigOutput();
 
   const options =
-    processingPresetSelect.value === "auto"
+    isFullAutoPreset()
       ? getAutoDitherOptionsFromUI(palette)
+      : isAutoDitherPreset()
+        ? getAutoDitherWithManualAdjustmentsOptionsFromUI(palette)
       : getDitherOptionsFromUI(palette);
 
   try {
@@ -1127,7 +1381,6 @@ fileInput.addEventListener("change", async () => {
   const img = await loadImage(src);
   lastImage = img;
   selectedSampleUrl = "";
-  currentImageName = file.name;
   autoControlsDirty = false;
   updateSelectedSampleButton();
   URL.revokeObjectURL(src);
@@ -1157,7 +1410,8 @@ function refreshControlState() {
     el.hidden = !showAutoRange;
   });
 
-  autoFlowSelect.disabled = processingPresetSelect.value !== "auto";
+  autoFlowSelect.disabled = !usesAutoAnalysisPreset();
+  autoAdjustmentsButton.disabled = !currentProcessingSuggestion;
 }
 
 function scheduleProcessImage() {
@@ -1166,6 +1420,20 @@ function scheduleProcessImage() {
     refreshControlState();
     await processImage();
   }, 80);
+}
+
+function shouldMarkAutoControlsDirty(el: HTMLElement) {
+  if (!usesAutoAnalysisPreset()) return false;
+  if (
+    el === processingPresetSelect ||
+    el === autoFlowSelect ||
+    el === paletteSelect
+  ) {
+    return false;
+  }
+  if (isFullAutoPreset()) return true;
+
+  return AUTO_DITHER_CONTROL_IDS.has(el.id);
 }
 
 const controls = [
@@ -1196,12 +1464,7 @@ const controls = [
 
 controls.forEach((el) => {
   el.addEventListener("change", () => {
-    if (
-      processingPresetSelect.value === "auto" &&
-      el !== processingPresetSelect &&
-      el !== autoFlowSelect &&
-      el !== paletteSelect
-    ) {
+    if (shouldMarkAutoControlsDirty(el)) {
       autoControlsDirty = true;
     }
 
@@ -1217,12 +1480,30 @@ controls.forEach((el) => {
 
   if (el instanceof HTMLInputElement) {
     el.addEventListener("input", () => {
-      if (processingPresetSelect.value === "auto") {
+      if (shouldMarkAutoControlsDirty(el)) {
         autoControlsDirty = true;
       }
       scheduleProcessImage();
     });
   }
+});
+
+autoAdjustmentsButton.addEventListener("click", () => {
+  const suggestion = getSelectedAutoSuggestion();
+  if (!suggestion) return;
+
+  applyAutoAdjustmentsToUI(getSelectedAutoImageAdjustmentOptions());
+  refreshControlState();
+  scheduleProcessImage();
+});
+
+resetImageAdjustmentsButton.addEventListener("click", () => {
+  applyManualAdjustmentDefaultsToUI();
+  if (isFullAutoPreset()) {
+    autoControlsDirty = true;
+  }
+  refreshControlState();
+  scheduleProcessImage();
 });
 
 copyConfigButton.addEventListener("click", async () => {
@@ -1231,6 +1512,25 @@ copyConfigButton.addEventListener("click", async () => {
 
 copyJsExampleButton.addEventListener("click", async () => {
   await navigator.clipboard.writeText(jsExampleOutput.textContent ?? "");
+});
+
+copyJsAdvancedExampleButton.addEventListener("click", async () => {
+  await navigator.clipboard.writeText(jsAdvancedExampleOutput.textContent ?? "");
+});
+
+configTabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const selectedTab = button.dataset.configTab;
+    configTabButtons.forEach((tabButton) => {
+      tabButton.setAttribute(
+        "aria-selected",
+        String(tabButton.dataset.configTab === selectedTab),
+      );
+    });
+    configPanels.forEach((panel) => {
+      panel.hidden = panel.dataset.configPanel !== selectedTab;
+    });
+  });
 });
 
 [screenResolutionSelect, orientationSelect, imageFitSelect].forEach(
