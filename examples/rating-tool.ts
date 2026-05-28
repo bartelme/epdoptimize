@@ -7,6 +7,7 @@ import {
   type ImageKind,
   type PaletteColorEntry,
   type ProcessingSuggestion,
+  type ToneMappingOptions,
 } from "../src";
 import { PALETTE_OPTIONS, SCREEN_RESOLUTIONS } from "./demo/constants";
 import type { ImageFitMode, ScreenOrientation } from "./demo/types";
@@ -16,6 +17,8 @@ type SampleMode = "all" | "selected";
 type ComparisonMode =
   | "legacyLayered"
   | "autoBaseline"
+  | "autoToneContrast"
+  | "autoWhiteGuard"
   | "chromaRgb"
   | "hueMixRgb"
   | "magentaRgb"
@@ -316,6 +319,14 @@ function getRatingVariants(
     ];
   }
 
+  if ((comparisonModeSelect.value as ComparisonMode) === "autoToneContrast") {
+    return getAutoToneContrastVariants(layeredSuggestion);
+  }
+
+  if ((comparisonModeSelect.value as ComparisonMode) === "autoWhiteGuard") {
+    return getAutoWhiteGuardVariants(layeredSuggestion);
+  }
+
   if ((comparisonModeSelect.value as ComparisonMode) === "chromaRgb") {
     return getChromaRgbVariants(naturalSuggestion);
   }
@@ -431,6 +442,135 @@ function getRatingVariants(
   );
 
   return dedupeVariants(variants);
+}
+
+function getAutoToneContrastVariants(layeredSuggestion: ProcessingSuggestion) {
+  const baseOptions = {
+    ...layeredSuggestion.ditherOptions,
+  };
+
+  return [
+    {
+      id: "autoTone:scurve",
+      label: "Auto with S-curve tone",
+      ditherOptions: {
+        ...baseOptions,
+        toneMapping: getSCurveToneMapping(baseOptions.toneMapping),
+      },
+    },
+    {
+      id: "autoTone:contrast",
+      label: "Auto with contrast tone",
+      ditherOptions: {
+        ...baseOptions,
+        toneMapping: getContrastToneMapping(baseOptions.toneMapping),
+      },
+    },
+  ] satisfies RatingVariant[];
+}
+
+function getAutoWhiteGuardVariants(layeredSuggestion: ProcessingSuggestion) {
+  return [
+    {
+      id: "autoWhite:guarded",
+      label: "Auto with white guard",
+      ditherOptions: getWhiteGuardOptions(layeredSuggestion.ditherOptions, true),
+    },
+    {
+      id: "autoWhite:unguarded",
+      label: "Auto without white guard",
+      ditherOptions: getWhiteGuardOptions(layeredSuggestion.ditherOptions, false),
+    },
+  ] satisfies RatingVariant[];
+}
+
+function getWhiteGuardOptions(
+  options: Partial<DitherImageOptions>,
+  preserveWhite: boolean,
+): Partial<DitherImageOptions> {
+  const rangeOptions =
+    typeof options.dynamicRangeCompression === "object"
+      ? options.dynamicRangeCompression
+      : options.dynamicRangeCompression === true
+        ? { mode: "display" as const, strength: 1 }
+        : undefined;
+
+  if (!rangeOptions || rangeOptions.mode === "off") {
+    return options;
+  }
+
+  return {
+    ...options,
+    dynamicRangeCompression: {
+      ...rangeOptions,
+      preserveWhite,
+      ...(preserveWhite
+        ? {
+            whitePreservePercentile:
+              rangeOptions.whitePreservePercentile ?? 0.99,
+            whitePreserveMinLuma: rangeOptions.whitePreserveMinLuma ?? 150,
+          }
+        : {}),
+    },
+  };
+}
+
+function getContrastToneMapping(
+  toneMapping: DitherImageOptions["toneMapping"],
+): ToneMappingOptions {
+  if (toneMapping?.mode === "contrast") {
+    return {
+      mode: "contrast",
+      exposure: toneMapping.exposure ?? 1,
+      saturation: toneMapping.saturation ?? 1,
+      contrast: Math.max(toneMapping.contrast ?? 1, 1),
+    };
+  }
+
+  const strength = toneMapping?.strength ?? 0.72;
+  const shadowBoost = toneMapping?.shadowBoost ?? 0;
+  const highlightCompress = toneMapping?.highlightCompress ?? 1;
+  const contrast =
+    1 +
+    strength * 0.28 +
+    shadowBoost * 0.18 +
+    Math.max(0, highlightCompress - 1) * 0.05 -
+    Math.max(0, 1 - highlightCompress) * 0.04;
+
+  return {
+    mode: "contrast",
+    exposure: toneMapping?.exposure ?? 1,
+    saturation: toneMapping?.saturation ?? 1,
+    contrast: clamp(contrast, 1, 1.42),
+  };
+}
+
+function getSCurveToneMapping(
+  toneMapping: DitherImageOptions["toneMapping"],
+): ToneMappingOptions {
+  if (toneMapping?.mode === "scurve") {
+    return {
+      mode: "scurve",
+      exposure: toneMapping.exposure ?? 1,
+      saturation: toneMapping.saturation ?? 1,
+      strength: toneMapping.strength ?? 0.72,
+      shadowBoost: toneMapping.shadowBoost ?? 0.08,
+      highlightCompress: toneMapping.highlightCompress ?? 1.2,
+      midpoint: toneMapping.midpoint ?? 0.5,
+    };
+  }
+
+  const contrast = toneMapping?.mode === "contrast" ? toneMapping.contrast ?? 1 : 1;
+
+  return {
+    mode: "scurve",
+    exposure: toneMapping?.exposure ?? 1,
+    saturation: toneMapping?.saturation ?? 1,
+    strength: clamp((contrast - 1) / 0.35, 0.58, 0.95),
+    shadowBoost: contrast >= 1.2 ? 0.08 : 0.05,
+    highlightCompress: contrast >= 1.2 ? 1.25 : 1.15,
+    midpoint: 0.5,
+  };
 }
 
 function getChromaRgbVariants(naturalSuggestion: ProcessingSuggestion) {
@@ -735,6 +875,10 @@ function getBestScore(scores: Record<string, number>) {
     (best, current) => (current[1] > best[1] ? current : best),
     ["balanced", -Infinity],
   )[0];
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function dedupeVariants(variants: RatingVariant[]) {

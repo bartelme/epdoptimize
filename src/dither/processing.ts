@@ -41,6 +41,9 @@ export interface DynamicRangeCompressionOptions {
   strength?: number;
   lowPercentile?: number;
   highPercentile?: number;
+  preserveWhite?: boolean;
+  whitePreservePercentile?: number;
+  whitePreserveMinLuma?: number;
 }
 
 export interface PaperNormalizationOptions {

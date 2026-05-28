@@ -1,4 +1,4 @@
-import { ditherImage, replaceColors } from "../../src";
+import { applyImageAdjustments, ditherCanvas, replaceColors } from "../../src";
 import type { DitherImageOptions, PaletteColorEntry } from "../../src";
 
 interface ProcessRequest {
@@ -10,6 +10,7 @@ interface ProcessRequest {
 
 interface ProcessResponse {
   id: number;
+  adjustedImageData?: ImageData;
   ditheredImageData?: ImageData;
   deviceImageData?: ImageData;
   error?: string;
@@ -43,24 +44,32 @@ self.addEventListener("message", async (event: MessageEvent<ProcessRequest>) => 
 
   try {
     const sourceCanvas = createCanvasFromImageData(imageData);
+    const adjustedCanvas = new OffscreenCanvas(imageData.width, imageData.height);
     const ditheredCanvas = new OffscreenCanvas(imageData.width, imageData.height);
     const deviceCanvas = new OffscreenCanvas(imageData.width, imageData.height);
 
-    await ditherImage(sourceCanvas, ditheredCanvas, {
+    await applyImageAdjustments(sourceCanvas, adjustedCanvas, {
+      ...options,
+      palette,
+    });
+    await ditherCanvas(adjustedCanvas, ditheredCanvas, {
       ...options,
       palette,
     });
     replaceColors(ditheredCanvas, deviceCanvas, palette);
 
+    const adjustedImageData = getCanvasImageData(adjustedCanvas);
     const ditheredImageData = getCanvasImageData(ditheredCanvas);
     const deviceImageData = getCanvasImageData(deviceCanvas);
     const response: ProcessResponse = {
       id,
+      adjustedImageData,
       ditheredImageData,
       deviceImageData,
     };
 
     postWorkerMessage(response, [
+      adjustedImageData.data.buffer,
       ditheredImageData.data.buffer,
       deviceImageData.data.buffer,
     ]);

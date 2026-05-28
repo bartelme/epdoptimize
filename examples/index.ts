@@ -1,5 +1,6 @@
 import {
-  ditherImage,
+  applyImageAdjustments,
+  ditherCanvas,
   getProcessingPreset,
   getProcessingPresetOptions,
   replaceColors,
@@ -34,6 +35,7 @@ import {
 } from "./demo/device-test";
 import {
   autoAdjustmentsButton,
+  adjustedCanvas,
   apiKeyInput,
   autoRecommendationReasons,
   autoRecommendationTitle,
@@ -619,6 +621,28 @@ function getDynamicRangeCompressionFromUI() {
   };
 }
 
+function withAutoWhitePreservation(
+  dynamicRangeCompression: ReturnType<typeof getDynamicRangeCompressionFromUI>,
+) {
+  const autoRange = getSelectedAutoImageAdjustmentOptions()
+    .dynamicRangeCompression;
+
+  if (
+    dynamicRangeCompression.mode === "off" ||
+    typeof autoRange !== "object" ||
+    autoRange.preserveWhite !== true
+  ) {
+    return dynamicRangeCompression;
+  }
+
+  return {
+    ...dynamicRangeCompression,
+    preserveWhite: true,
+    whitePreservePercentile: autoRange.whitePreservePercentile ?? 0.99,
+    whitePreserveMinLuma: autoRange.whitePreserveMinLuma ?? 150,
+  };
+}
+
 function getCanvasDitherOptionsFromUI(palette: PaletteColorEntry[]) {
   return {
     ditheringType: ditheringTypeSelect.value,
@@ -747,6 +771,9 @@ function getAutoAnalysisSuggestions(palette: PaletteColorEntry[]) {
 
 function getAutoDitherOptionsFromUI(palette: PaletteColorEntry[]) {
   const suggestion = getSelectedAutoSuggestion();
+  const dynamicRangeCompression = withAutoWhitePreservation(
+    getDynamicRangeCompressionFromUI(),
+  );
 
   return {
     ...suggestion?.ditherOptions,
@@ -763,7 +790,7 @@ function getAutoDitherOptionsFromUI(palette: PaletteColorEntry[]) {
     processingEngine: processingEngineSelect.value as DitherProcessingEngine,
     calibrate: true,
     toneMapping: getToneMappingFromUI(),
-    dynamicRangeCompression: getDynamicRangeCompressionFromUI(),
+    dynamicRangeCompression,
   };
 }
 
@@ -1233,7 +1260,8 @@ async function renderProcessedCanvases(
   options: DitherImageOptions,
 ) {
   if (!canUseProcessingWorker()) {
-    await ditherImage(inputCanvas, outputCanvas, options);
+    await applyImageAdjustments(inputCanvas, adjustedCanvas, options);
+    await ditherCanvas(adjustedCanvas, outputCanvas, options);
     replaceColors(outputCanvas, deviceColorsCanvas, palette);
     return;
   }
@@ -1282,6 +1310,7 @@ async function renderProcessedCanvases(
     const onMessage = (
       event: MessageEvent<{
         id: number;
+        adjustedImageData?: ImageData;
         ditheredImageData?: ImageData;
         deviceImageData?: ImageData;
         error?: string;
@@ -1298,7 +1327,12 @@ async function renderProcessedCanvases(
         return;
       }
 
-      if (event.data.ditheredImageData && event.data.deviceImageData) {
+      if (
+        event.data.adjustedImageData &&
+        event.data.ditheredImageData &&
+        event.data.deviceImageData
+      ) {
+        putImageDataOnCanvas(adjustedCanvas, event.data.adjustedImageData);
         putImageDataOnCanvas(outputCanvas, event.data.ditheredImageData);
         putImageDataOnCanvas(deviceColorsCanvas, event.data.deviceImageData);
       }

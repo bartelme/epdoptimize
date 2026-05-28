@@ -306,6 +306,103 @@ const applyLevelCompression = (
   }
 };
 
+interface WhitePreservationPlan {
+  sourceLumas: Float64Array;
+  sourceWhiteLuma: number;
+  targetWhite: RGB;
+  targetWhiteLuma: number;
+}
+
+const getPercentile = (values: number[], percentile: number) => {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.round((sorted.length - 1) * percentile))
+  );
+  return sorted[index];
+};
+
+const getPaletteWhite = (palette: RGB[]) => {
+  if (!palette.length) return [255, 255, 255] satisfies RGB;
+
+  return palette.reduce((lightest, color) =>
+    luma709(...color) > luma709(...lightest) ? color : lightest
+  );
+};
+
+const getWhitePreservationPlan = (
+  image: ImageDataLike,
+  options: DitherImageOptions & typeof defaultOptions,
+  colorPalette: RGB[]
+): WhitePreservationPlan | null => {
+  const rangeOptions = options.dynamicRangeCompression;
+  if (
+    !rangeOptions ||
+    rangeOptions === true ||
+    rangeOptions.preserveWhite !== true
+  ) {
+    return null;
+  }
+
+  const data = image.data;
+  const pixelCount = Math.floor(data.length / 4);
+  if (pixelCount <= 0) return null;
+
+  const sourceLumas = new Float64Array(pixelCount);
+  const visibleLumas: number[] = [];
+  for (let i = 0, pixelIndex = 0; i < data.length; i += 4, pixelIndex++) {
+    if (data[i + 3] <= 16) {
+      sourceLumas[pixelIndex] = -1;
+      continue;
+    }
+
+    const luma = luma709(data[i], data[i + 1], data[i + 2]);
+    sourceLumas[pixelIndex] = luma;
+    visibleLumas.push(luma);
+  }
+
+  if (!visibleLumas.length) return null;
+
+  const sourceWhiteLuma = getPercentile(
+    visibleLumas,
+    rangeOptions.whitePreservePercentile ?? 0.99
+  );
+  if (sourceWhiteLuma < (rangeOptions.whitePreserveMinLuma ?? 150)) {
+    return null;
+  }
+
+  const targetWhite = getPaletteWhite(colorPalette);
+  return {
+    sourceLumas,
+    sourceWhiteLuma,
+    targetWhite,
+    targetWhiteLuma: luma709(...targetWhite),
+  };
+};
+
+const applyWhitePreservation = (
+  image: ImageDataLike,
+  plan: WhitePreservationPlan | null
+) => {
+  if (!plan) return;
+
+  const data = image.data;
+  const [whiteR, whiteG, whiteB] = plan.targetWhite;
+  for (let i = 0, pixelIndex = 0; i < data.length; i += 4, pixelIndex++) {
+    if (plan.sourceLumas[pixelIndex] + 0.0001 < plan.sourceWhiteLuma) {
+      continue;
+    }
+    if (luma709(data[i], data[i + 1], data[i + 2]) >= plan.targetWhiteLuma) {
+      continue;
+    }
+
+    data[i] = whiteR;
+    data[i + 1] = whiteG;
+    data[i + 2] = whiteB;
+  }
+};
+
 const mergeImageProcessingOptions = (
   options: DitherImageOptions & typeof defaultOptions
 ): ImageProcessingOptions | undefined => {
@@ -376,11 +473,19 @@ const applyImageAdjustmentsToImageData = (
   options: DitherImageOptions & typeof defaultOptions,
   colorPalette: RGB[]
 ) => {
+  const whitePreservationPlan = getWhitePreservationPlan(
+    image,
+    options,
+    colorPalette
+  );
+
   applyImageProcessing(image, mergeImageProcessingOptions(options), colorPalette);
 
   if (options.levelCompression) {
     applyLevelCompression(image, options.levelCompression);
   }
+
+  applyWhitePreservation(image, whitePreservationPlan);
 };
 
 const ditherImageData = async (

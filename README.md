@@ -573,7 +573,7 @@ import {
 | `colorMatching`           | string                              | `"rgb"`            | Palette distance model. Options: `rgb`, `lab`, `chroma`. `chroma` is experimental and tries to keep saturated pastel colors from collapsing into white.                                                                                           |
 | `paperNormalization`      | object                              | `undefined`        | Optional scan cleanup. `{ mode: "warmPaper" }` neutralizes warm low-saturation paper, anchors dark neutral ink, and preserves red poster ink before tone mapping.                                                                                   |
 | `toneMapping`             | object                              | `undefined`        | Exposure, saturation, contrast, or S-curve preprocessing.                                                                                                                                                                                          |
-| `dynamicRangeCompression` | object / boolean                    | `undefined`        | LAB lightness compression. Use `{ mode: "display" }`, `{ mode: "auto" }`, or `{ mode: "off" }`.                                                                                                                                                    |
+| `dynamicRangeCompression` | object / boolean                    | `undefined`        | LAB lightness compression. Use `{ mode: "display" }`, `{ mode: "auto" }`, or `{ mode: "off" }`. Auto suggestions enable `preserveWhite` so p99/background-white pixels are not pushed below the palette white during range fitting.                 |
 | `levelCompression`        | object                              | `undefined`        | Optional legacy/preprocessing range remap with `perChannel` or `luma` mode.                                                                                                                                                                        |
 | `sampleColorsFromImage`   | boolean                             | `false`            | Reserved for image-derived palettes.                                                                                                                                                                                                               |
 | `numberOfSampleColors`    | number                              | `10`               | Number of colors to sample when image-derived palettes are enabled.                                                                                                                                                                                |
@@ -620,6 +620,9 @@ await ditherImage(inputCanvas, ditheredCanvas, {
     strength: 0.85,
     lowPercentile: 0.01,
     highPercentile: 0.99,
+    preserveWhite: true,
+    whitePreservePercentile: 0.99,
+    whitePreserveMinLuma: 150,
   },
 });
 ```
@@ -629,6 +632,12 @@ Modes:
 - `off`: Disable dynamic range compression.
 - `display`: Compress into the lightness range of the selected palette.
 - `auto`: Uses percentile clipping before compression.
+
+`preserveWhite` protects the brightest/background-white source pixels after
+range and level fitting. When enabled, pixels at or above
+`whitePreservePercentile` are snapped back to the palette white if processing
+would make them darker than that white point. Auto suggestions enable this by
+default for active range fitting.
 
 ## Dithering Algorithms
 

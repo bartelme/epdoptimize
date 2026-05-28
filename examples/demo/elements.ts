@@ -11,6 +11,7 @@ export const imageStyleMeter = $("imageStyleMeter") as HTMLSpanElement;
 export const imageStyleMetrics = $("imageStyleMetrics") as HTMLDListElement;
 export const canvasGrid = $("canvasGrid") as HTMLDivElement;
 export const inputCanvas = $("inputCanvas") as HTMLCanvasElement;
+export const adjustedCanvas = $("adjustedCanvas") as HTMLCanvasElement;
 export const outputCanvas = $("outputCanvas") as HTMLCanvasElement;
 export const deviceColorsCanvas = $("deviceColorsCanvas") as HTMLCanvasElement;
 export const canvasFrames = Array.from(

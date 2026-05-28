@@ -269,6 +269,8 @@ function buildSuggestion(
   applyPosterScanTuning(base, classification, reasons);
   applyIntent(base, intent, reasons);
   enforceQuantizationGuard(base, classification, reasons);
+  enforceMinimumAutoContrast(base);
+  enforceAutoWhitePreservation(base, reasons);
   if ((base.ditheringType ?? "errorDiffusion") === "errorDiffusion") {
     reasons.push("Serpentine diffusion reduces directional dithering artifacts.");
   }
@@ -332,6 +334,12 @@ function buildLayeredSuggestion(
   applyLayeredAutoAdjustments(base, classification, paletteProfile, reasons);
   applyLowContrastRestoreTuning(base, classification, reasons);
   applyPosterScanTuning(base, classification, reasons);
+  addPaletteReasons(paletteProfile, reasons);
+  applyPaletteTuning(base, paletteProfile, reasons);
+  applyIntent(base, intent, reasons);
+  enforceQuantizationGuard(base, classification, reasons);
+  enforceMinimumAutoContrast(base);
+  enforceAutoWhitePreservation(base, reasons);
   pipelineSteps.push({
     id: "adjust",
     title: "Apply auto adjustments",
@@ -343,11 +351,6 @@ function buildLayeredSuggestion(
       paperNormalization: base.paperNormalization,
     },
   });
-
-  addPaletteReasons(paletteProfile, reasons);
-  applyPaletteTuning(base, paletteProfile, reasons);
-  applyIntent(base, intent, reasons);
-  enforceQuantizationGuard(base, classification, reasons);
   pipelineSteps.push({
     id: "output",
     title: "Dither and fit to palette",
@@ -392,6 +395,49 @@ function buildLayeredSuggestion(
     scores,
     pipelineSteps,
   };
+}
+
+function enforceMinimumAutoContrast(recommendation: RecommendationBase) {
+  if (recommendation.toneMapping?.mode === "contrast") {
+    recommendation.toneMapping = {
+      ...recommendation.toneMapping,
+      contrast: Math.max(recommendation.toneMapping.contrast ?? 1, 1),
+    };
+    return;
+  }
+
+  if (recommendation.toneMapping) return;
+
+  const preset = getProcessingPreset(recommendation.processingPreset);
+  if (preset?.toneMapping.mode !== "contrast") return;
+  if ((preset.toneMapping.contrast ?? 1) >= 1) return;
+
+  recommendation.toneMapping = {
+    ...preset.toneMapping,
+    contrast: 1,
+  };
+}
+
+function enforceAutoWhitePreservation(
+  recommendation: RecommendationBase,
+  reasons: string[]
+) {
+  if (
+    !recommendation.dynamicRangeCompression ||
+    recommendation.dynamicRangeCompression.mode === "off"
+  ) {
+    return;
+  }
+
+  recommendation.dynamicRangeCompression = {
+    ...recommendation.dynamicRangeCompression,
+    preserveWhite: true,
+    whitePreservePercentile:
+      recommendation.dynamicRangeCompression.whitePreservePercentile ?? 0.99,
+    whitePreserveMinLuma:
+      recommendation.dynamicRangeCompression.whitePreserveMinLuma ?? 150,
+  };
+  reasons.push("Detected paper-white highlights are protected during range fitting.");
 }
 
 function getBaseRecommendation(
@@ -623,13 +669,13 @@ function applyLayeredAutoAdjustments(
         mode: "contrast",
         exposure: 1,
         saturation: 1.05,
-        contrast: 0.9,
+        contrast: 1,
       };
       recommendation.dynamicRangeCompression = {
         mode: "display",
         strength: 0.85,
       };
-      reasons.push("High contrast photos use softer contrast and display fitting.");
+      reasons.push("High contrast photos use neutral contrast and display fitting.");
       break;
     case "photo":
       if (metrics.lumaStdDev <= 42) {
