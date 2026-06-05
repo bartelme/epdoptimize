@@ -1,6 +1,6 @@
 {
   "name": "epdoptimize",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "Efficiently optimize EPD (Electronic Paper Display) images",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -31,7 +31,12 @@
     "examples:dev": "vite --config examples/vite.config.js",
     "build:examples": "vite build --config examples/vite.config.js && cp examples/example-dither.jpg dist/examples/example-dither.jpg",
     "predeploy": "npm run build:examples",
-    "deploy": "npx gh-pages -d dist/examples"
+    "deploy": "npx gh-pages -d dist/examples",
+    "release": "npm run release:patch",
+    "release:current": "VERSION=$(node -p \"require('./package.json').version\") && git tag \"v$VERSION\" && git push origin main \"v$VERSION\" && gh release create \"v$VERSION\" --generate-notes",
+    "release:patch": "npm version patch && git push origin main --follow-tags && gh release create v$(node -p \"require('./package.json').version\") --generate-notes",
+    "release:minor": "npm version minor && git push origin main --follow-tags && gh release create v$(node -p \"require('./package.json').version\") --generate-notes",
+    "release:major": "npm version major && git push origin main --follow-tags && gh release create v$(node -p \"require('./package.json').version\") --generate-notes"
   },
   "files": [
     "dist"
