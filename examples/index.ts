@@ -42,6 +42,7 @@ import {
   autoFlowSelect,
   canvasFrames,
   canvasGrid,
+  clarityInput,
   colorMatchingSelect,
   configPanels,
   configTabButtons,
@@ -56,11 +57,17 @@ import {
   downloadLink,
   dynamicRangeModeSelect,
   dynamicRangeStrengthInput,
+  edgeAntialiasingCheckbox,
+  edgeAntialiasingStrengthInput,
+  edgePreservationCheckbox,
+  edgePreservationStrengthInput,
   errorDiffusionMatrixSelect,
   exposureInput,
   fileInput,
   highPercentileInput,
+  histogramPreviewCanvas,
   highlightCompressInput,
+  imageFitToggleButtons,
   imageFitSelect,
   imageStyleConfidence,
   imageStyleMeter,
@@ -74,6 +81,7 @@ import {
   orderedDitheringMatrixH,
   orderedDitheringMatrixW,
   orientationSelect,
+  orientationToggleButtons,
   outputCanvas,
   palettePreview,
   paletteSelect,
@@ -81,6 +89,7 @@ import {
   processingEngineSelect,
   processingPresetSelect,
   randomDitheringTypeSelect,
+  rangeFittingPreviewCanvas,
   resetImageAdjustmentsButton,
   sampleImageGrid,
   saturationInput,
@@ -89,7 +98,7 @@ import {
   serpentineCheckbox,
   shadowBoostInput,
   testOnDeviceButton,
-  toneModeSelect,
+  toneCurvePreviewCanvas,
   toggleOriginalSizeButton,
   ditheringTypeSelect,
 } from "./demo/elements";
@@ -100,11 +109,16 @@ import {
   formatPresetName,
   formatRatio,
 } from "./demo/format";
+import { renderColorPalette } from "./demo/palette-preview";
+import {
+  drawHistogramPreview,
+  drawRangeFittingPreview,
+  drawToneCurvePreview,
+} from "./demo/preview-charts";
 import type {
   DemoConfig,
   DynamicRangeMode,
   ImageFitMode,
-  ToneMappingMode,
 } from "./demo/types";
 
 const sampleImages = import.meta.glob("./sampleImages/*.{jpg,jpeg,png,webp}", {
@@ -136,6 +150,7 @@ let autoControlsDirty = false;
 let workerRequestId = 0;
 let processingWorker: Worker | null = null;
 let cancelProcessingWorkerRequest: (() => void) | null = null;
+const downloadObjectUrls = new Map<HTMLAnchorElement, string>();
 let autoAnalysisCache:
   | {
       key: string;
@@ -149,6 +164,9 @@ let syncingCanvasScroll = false;
 
 const FULL_AUTO_PRESET_VALUE = "auto";
 const AUTO_DITHER_PRESET_VALUE = "autoDitherManual";
+const DEFAULT_SAMPLE_IMAGE_KEY = "paint.jpg";
+const DEFAULT_TONE_CURVE_STRENGTH = 0.85;
+const DEFAULT_TONE_CURVE_MIDPOINT = 0.5;
 const AUTO_DITHER_CONTROL_IDS = new Set([
   "ditheringType",
   "errorDiffusionMatrix",
@@ -158,7 +176,17 @@ const AUTO_DITHER_CONTROL_IDS = new Set([
   "serpentine",
   "colorMatching",
   "processingEngine",
+  "edgePreservation",
+  "edgePreservationStrength",
+  "edgeAntialiasing",
+  "edgeAntialiasingStrength",
 ]);
+const KERNEL_DITHERING_TYPES = new Set([
+  "errorDiffusion",
+  "ditherItErrorDiffusion",
+]);
+const ORDERED_DITHERING_TYPES = new Set(["ordered", "ditherItOrdered"]);
+const DITHER_IT_UNSUPPORTED_KERNELS = new Set(["falseFloydSteinberg"]);
 
 function isFullAutoPreset() {
   return processingPresetSelect.value === FULL_AUTO_PRESET_VALUE;
@@ -172,10 +200,80 @@ function usesAutoAnalysisPreset() {
   return isFullAutoPreset() || isAutoDitherPreset();
 }
 
+function syncToggleButtons(
+  buttons: HTMLButtonElement[],
+  selectedValue: string,
+  datasetKey: "orientationOption" | "imageFitOption",
+) {
+  for (const button of buttons) {
+    const selected = button.dataset[datasetKey] === selectedValue;
+    button.setAttribute("aria-checked", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
+}
+
+function syncWorkspaceToggleControls() {
+  syncToggleButtons(
+    orientationToggleButtons,
+    orientationSelect.value,
+    "orientationOption",
+  );
+  syncToggleButtons(imageFitToggleButtons, imageFitSelect.value, "imageFitOption");
+}
+
+function selectWorkspaceToggleValue(
+  select: HTMLSelectElement,
+  value: string | undefined,
+) {
+  if (!value || select.value === value) return;
+  select.value = value;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function setupWorkspaceToggleButtons(
+  buttons: HTMLButtonElement[],
+  select: HTMLSelectElement,
+  datasetKey: "orientationOption" | "imageFitOption",
+) {
+  buttons.forEach((button, index) => {
+    button.addEventListener("click", () => {
+      selectWorkspaceToggleValue(select, button.dataset[datasetKey]);
+    });
+
+    button.addEventListener("keydown", (event) => {
+      const direction =
+        event.key === "ArrowRight" || event.key === "ArrowDown"
+          ? 1
+          : event.key === "ArrowLeft" || event.key === "ArrowUp"
+            ? -1
+            : 0;
+      if (direction === 0) return;
+
+      event.preventDefault();
+      const nextIndex = (index + direction + buttons.length) % buttons.length;
+      const nextButton = buttons[nextIndex];
+      nextButton.focus();
+      selectWorkspaceToggleValue(select, nextButton.dataset[datasetKey]);
+    });
+  });
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
+  setupCanvasDownloads();
+  setupWorkspaceToggleButtons(
+    orientationToggleButtons,
+    orientationSelect,
+    "orientationOption",
+  );
+  setupWorkspaceToggleButtons(
+    imageFitToggleButtons,
+    imageFitSelect,
+    "imageFitOption",
+  );
   populateSampleImageOptions();
   populateProcessingPresetOptions();
   loadDeviceTestConfig();
+  syncWorkspaceToggleControls();
   applyPresetToUI(processingPresetSelect.value);
   updateCanvasSizeMode();
   refreshControlState();
@@ -270,7 +368,10 @@ function populateSampleImageOptions() {
     sampleImageGrid.append(button);
   }
 
-  selectedSampleUrl = entries[0]?.[1] ?? "";
+  selectedSampleUrl =
+    entries.find(([path]) => sampleKey(path) === DEFAULT_SAMPLE_IMAGE_KEY)?.[1] ??
+    entries[0]?.[1] ??
+    "";
   updateSelectedSampleButton();
 }
 
@@ -312,10 +413,17 @@ async function loadImage(src: string) {
   return img;
 }
 
+function applyImageOrientationToUI(img: HTMLImageElement) {
+  orientationSelect.value = getOriginalImageOrientation(img);
+  syncWorkspaceToggleControls();
+  saveDeviceTestConfig();
+}
+
 async function loadSelectedSampleImage() {
   const src =
     selectedSampleUrl || import.meta.env.BASE_URL + "example-dither.jpg";
   lastImage = await loadImage(src);
+  applyImageOrientationToUI(lastImage);
   autoControlsDirty = false;
   await processImage();
 }
@@ -329,48 +437,16 @@ function drawImageToScreenCanvas(
   const orientation = getSelectedOrientation();
   const imageFit = getSelectedImageFit();
 
-  if (orientation === "original") {
-    const originalOrientation = getOriginalImageOrientation(img);
-    const canvasWidth = originalOrientation === "portrait" ? height : width;
-    const canvasHeight = originalOrientation === "portrait" ? width : height;
+  const resolvedOrientation =
+    orientation === "original" ? getOriginalImageOrientation(img) : orientation;
+  const canvasWidth = resolvedOrientation === "portrait" ? height : width;
+  const canvasHeight = resolvedOrientation === "portrait" ? width : height;
 
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-    drawImageWithFit(img, ctx, canvasWidth, canvasHeight, imageFit);
-    return;
-  }
-
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, width, height);
-
-  if (orientation === "landscape") {
-    drawImageWithFit(img, ctx, width, height, imageFit);
-    return;
-  }
-
-  const portraitCanvas = document.createElement("canvas");
-  portraitCanvas.width = height;
-  portraitCanvas.height = width;
-
-  const portraitCtx = portraitCanvas.getContext("2d")!;
-  portraitCtx.fillStyle = "#ffffff";
-  portraitCtx.fillRect(0, 0, portraitCanvas.width, portraitCanvas.height);
-  drawImageWithFit(
-    img,
-    portraitCtx,
-    portraitCanvas.width,
-    portraitCanvas.height,
-    imageFit,
-  );
-
-  ctx.save();
-  ctx.setTransform(0, 1, -1, 0, width, 0);
-  ctx.drawImage(portraitCanvas, 0, 0);
-  ctx.restore();
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  drawImageWithFit(img, ctx, canvasWidth, canvasHeight, imageFit);
 }
 
 function drawImageWithFit(
@@ -380,12 +456,14 @@ function drawImageWithFit(
   height: number,
   imageFit: ImageFitMode,
 ) {
+  const imageWidth = img.naturalWidth || img.width;
+  const imageHeight = img.naturalHeight || img.height;
   const scale =
     imageFit === "cover"
-      ? Math.max(width / img.width, height / img.height)
-      : Math.min(width / img.width, height / img.height);
-  const drawWidth = Math.round(img.width * scale);
-  const drawHeight = Math.round(img.height * scale);
+      ? Math.max(width / imageWidth, height / imageHeight)
+      : Math.min(width / imageWidth, height / imageHeight);
+  const drawWidth = Math.round(imageWidth * scale);
+  const drawHeight = Math.round(imageHeight * scale);
   const offsetX = Math.round((width - drawWidth) / 2);
   const offsetY = Math.round((height - drawHeight) / 2);
 
@@ -413,15 +491,74 @@ function setSelectValue(select: HTMLSelectElement, value: string | undefined) {
   }
 }
 
+function setOptionDisabled(
+  select: HTMLSelectElement,
+  value: string,
+  disabled: boolean,
+  reason = "",
+) {
+  const option = Array.from(select.options).find(
+    (candidate) => candidate.value === value,
+  );
+  if (!option) return;
+  option.disabled = disabled;
+  option.title = disabled ? reason : "";
+}
+
+function selectFirstEnabledOption(select: HTMLSelectElement) {
+  const firstEnabled = Array.from(select.options).find(
+    (option) => !option.disabled,
+  );
+  if (firstEnabled && select.options[select.selectedIndex]?.disabled) {
+    select.value = firstEnabled.value;
+  }
+}
+
+function setFormControlEnabled(
+  control: HTMLInputElement | HTMLSelectElement,
+  enabled: boolean,
+  reason = "",
+) {
+  control.disabled = !enabled;
+  control.title = enabled ? "" : reason;
+  control
+    .closest<HTMLElement>(".control, .check")
+    ?.classList.toggle("is-disabled", !enabled);
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getClarityFromUI() {
+  const amount = readNumber(clarityInput, 0);
+  if (numbersEqual(amount, 0)) return undefined;
+
+  return {
+    amount: Math.sign(amount) * Math.pow(Math.abs(amount), 1.1),
+    radius: 2,
+    midtone: 1.2,
+  };
+}
+
+function getClaritySliderValue(
+  clarity: DitherImageOptions["clarity"] | undefined,
+) {
+  const amount = clarity?.amount;
+  if (typeof amount !== "number") return 0;
+
+  return Math.sign(amount) * Math.pow(Math.abs(amount), 1 / 1.1);
+}
+
 function applyManualAdjustmentDefaultsToUI() {
-  toneModeSelect.value = "off";
-  setResolvedInputValue(exposureInput, undefined, 1);
-  setResolvedInputValue(saturationInput, undefined, 1);
-  setResolvedInputValue(contrastInput, undefined, 1);
-  setResolvedInputValue(scurveStrengthInput, undefined, 0.9);
+  setResolvedInputValue(exposureInput, undefined, 0);
+  setResolvedInputValue(saturationInput, undefined, 0);
+  setResolvedInputValue(contrastInput, undefined, 0);
+  setResolvedInputValue(clarityInput, undefined, 0);
+  setResolvedInputValue(scurveStrengthInput, undefined, 0);
   setResolvedInputValue(shadowBoostInput, undefined, 0);
-  setResolvedInputValue(highlightCompressInput, undefined, 1.5);
-  setResolvedInputValue(midpointInput, undefined, 0.5);
+  setResolvedInputValue(highlightCompressInput, undefined, 0);
+  setResolvedInputValue(midpointInput, undefined, DEFAULT_TONE_CURVE_MIDPOINT);
 
   dynamicRangeModeSelect.value = "off";
   setResolvedInputValue(dynamicRangeStrengthInput, undefined, 1);
@@ -440,14 +577,38 @@ function applyPresetToUI(name: string) {
   const preset = getProcessingPreset(name);
   if (!preset) return;
 
-  toneModeSelect.value = preset.toneMapping.mode ?? "contrast";
-  setInputValue(exposureInput, preset.toneMapping.exposure);
-  setInputValue(saturationInput, preset.toneMapping.saturation);
-  setInputValue(contrastInput, preset.toneMapping.contrast);
-  setInputValue(scurveStrengthInput, preset.toneMapping.strength);
-  setInputValue(shadowBoostInput, preset.toneMapping.shadowBoost);
-  setInputValue(highlightCompressInput, preset.toneMapping.highlightCompress);
-  setInputValue(midpointInput, preset.toneMapping.midpoint);
+  setResolvedInputValue(
+    exposureInput,
+    preset.toneMapping.exposure,
+    0,
+  );
+  setResolvedInputValue(
+    saturationInput,
+    preset.toneMapping.saturation,
+    0,
+  );
+  setResolvedInputValue(
+    contrastInput,
+    preset.toneMapping.contrast,
+    0,
+  );
+  setResolvedInputValue(clarityInput, undefined, 0);
+  setResolvedInputValue(
+    scurveStrengthInput,
+    preset.toneMapping.mode === "scurve" ? preset.toneMapping.strength : 0,
+    0,
+  );
+  setResolvedInputValue(shadowBoostInput, preset.toneMapping.shadowBoost, 0);
+  setResolvedInputValue(
+    highlightCompressInput,
+    preset.toneMapping.highlightCompress,
+    0,
+  );
+  setResolvedInputValue(
+    midpointInput,
+    preset.toneMapping.midpoint,
+    DEFAULT_TONE_CURVE_MIDPOINT,
+  );
 
   dynamicRangeModeSelect.value = preset.dynamicRangeCompression?.mode ?? "off";
   setInputValue(
@@ -493,6 +654,22 @@ function applyAutoDitherAndMatchingToUI(options: Partial<DitherImageOptions>) {
     processingEngineSelect,
     options.processingEngine ?? DEFAULT_DITHER_OPTIONS.processingEngine,
   );
+  edgePreservationCheckbox.checked =
+    options.edgePreservation?.enabled ??
+    DEFAULT_DITHER_OPTIONS.edgePreservation.enabled;
+  setResolvedInputValue(
+    edgePreservationStrengthInput,
+    options.edgePreservation?.strength,
+    DEFAULT_DITHER_OPTIONS.edgePreservation.strength,
+  );
+  edgeAntialiasingCheckbox.checked =
+    options.edgeAntialiasing?.enabled ??
+    DEFAULT_DITHER_OPTIONS.edgeAntialiasing.enabled;
+  setResolvedInputValue(
+    edgeAntialiasingStrengthInput,
+    options.edgeAntialiasing?.strength,
+    DEFAULT_DITHER_OPTIONS.edgeAntialiasing.strength,
+  );
 
   const orderedDitheringMatrix =
     options.orderedDitheringMatrix ??
@@ -512,18 +689,44 @@ function applyAutoAdjustmentsToUI(options: Partial<DitherImageOptions>) {
       ? options.dynamicRangeCompression
       : preset?.dynamicRangeCompression;
 
-  toneModeSelect.value = toneMapping?.mode ?? "off";
-  setResolvedInputValue(exposureInput, toneMapping?.exposure, 1);
-  setResolvedInputValue(saturationInput, toneMapping?.saturation, 1);
-  setResolvedInputValue(contrastInput, toneMapping?.contrast, 1);
-  setResolvedInputValue(scurveStrengthInput, toneMapping?.strength, 0.9);
+  setResolvedInputValue(
+    exposureInput,
+    toneMapping?.exposure,
+    0,
+  );
+  setResolvedInputValue(
+    saturationInput,
+    toneMapping?.saturation,
+    0,
+  );
+  setResolvedInputValue(
+    contrastInput,
+    toneMapping?.contrast,
+    0,
+  );
+  setResolvedInputValue(
+    clarityInput,
+    getClaritySliderValue(options.clarity),
+    0,
+  );
+  setResolvedInputValue(
+    scurveStrengthInput,
+    toneMapping?.mode === "scurve" || !toneMapping?.mode
+      ? toneMapping?.strength
+      : undefined,
+    0,
+  );
   setResolvedInputValue(shadowBoostInput, toneMapping?.shadowBoost, 0);
   setResolvedInputValue(
     highlightCompressInput,
     toneMapping?.highlightCompress,
-    1.5,
+    0,
   );
-  setResolvedInputValue(midpointInput, toneMapping?.midpoint, 0.5);
+  setResolvedInputValue(
+    midpointInput,
+    toneMapping?.midpoint,
+    DEFAULT_TONE_CURVE_MIDPOINT,
+  );
 
   dynamicRangeModeSelect.value = dynamicRangeCompression?.mode ?? "off";
   setResolvedInputValue(
@@ -561,18 +764,6 @@ function numberArraysEqual(a: number[], b: number[]) {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-function renderColorPalette(target: HTMLElement, colors: string[]) {
-  target.innerHTML = "";
-  for (const color of colors) {
-    const swatch = document.createElement("span");
-    swatch.className = "color-swatch";
-    swatch.style.backgroundColor = color;
-    swatch.title = color;
-    swatch.setAttribute("aria-label", color);
-    target.append(swatch);
-  }
-}
-
 function getSelectedPaletteOption() {
   return (
     PALETTE_OPTIONS[paletteSelect.value as keyof typeof PALETTE_OPTIONS] ??
@@ -594,15 +785,22 @@ function updatePalettePreviews() {
 }
 
 function getToneMappingFromUI() {
+  const shadowBoost = readNumber(shadowBoostInput, 0);
+  const highlights = readNumber(highlightCompressInput, 0);
+  const configuredStrength = readNumber(scurveStrengthInput, 0);
+  const hasCurveAdjustment =
+    !numbersEqual(shadowBoost, 0) || !numbersEqual(highlights, 0);
+
   return {
-    mode: toneModeSelect.value as ToneMappingMode,
-    exposure: readNumber(exposureInput, 1),
-    saturation: readNumber(saturationInput, 1),
-    contrast: readNumber(contrastInput, 1),
-    strength: readNumber(scurveStrengthInput, 0.9),
-    shadowBoost: readNumber(shadowBoostInput, 0),
-    highlightCompress: readNumber(highlightCompressInput, 1.5),
-    midpoint: readNumber(midpointInput, 0.5),
+    exposure: readNumber(exposureInput, 0),
+    saturation: readNumber(saturationInput, 0),
+    contrast: readNumber(contrastInput, 0),
+    strength: hasCurveAdjustment
+      ? configuredStrength || DEFAULT_TONE_CURVE_STRENGTH
+      : 0,
+    shadowBoost,
+    highlightCompress: highlights,
+    midpoint: readNumber(midpointInput, DEFAULT_TONE_CURVE_MIDPOINT),
   };
 }
 
@@ -619,6 +817,94 @@ function getDynamicRangeCompressionFromUI() {
     lowPercentile: readNumber(lowPercentileInput, 0.01),
     highPercentile: readNumber(highPercentileInput, 0.99),
   };
+}
+
+function getEdgePreservationFromUI() {
+  return {
+    enabled: edgePreservationCheckbox.checked,
+    strength: readNumber(
+      edgePreservationStrengthInput,
+      DEFAULT_DITHER_OPTIONS.edgePreservation.strength,
+    ),
+  };
+}
+
+function getEdgeAntialiasingFromUI() {
+  return {
+    enabled: edgeAntialiasingCheckbox.checked,
+    strength: readNumber(
+      edgeAntialiasingStrengthInput,
+      DEFAULT_DITHER_OPTIONS.edgeAntialiasing.strength,
+    ),
+  };
+}
+
+function updateCanvasDitherControlAvailability() {
+  const ditheringType = ditheringTypeSelect.value;
+  const usesDitherItKernel = ditheringType === "ditherItErrorDiffusion";
+  setOptionDisabled(
+    errorDiffusionMatrixSelect,
+    "falseFloydSteinberg",
+    usesDitherItKernel,
+    "DITHER IT error diffusion does not support this kernel.",
+  );
+  selectFirstEnabledOption(errorDiffusionMatrixSelect);
+
+  const usesKernel = KERNEL_DITHERING_TYPES.has(ditheringType);
+  const usesOrderedMatrix = ORDERED_DITHERING_TYPES.has(ditheringType);
+  const usesRandomMode = ditheringType === "random";
+  const usesWasmEngine = ditheringType === "errorDiffusion";
+  const canUseWasmEngine =
+    usesWasmEngine && colorMatchingSelect.value === "rgb";
+
+  setFormControlEnabled(
+    errorDiffusionMatrixSelect,
+    usesKernel,
+    "Kernel is only used by error diffusion.",
+  );
+  setFormControlEnabled(
+    serpentineCheckbox,
+    usesKernel,
+    "Serpentine scanning is only used by error diffusion.",
+  );
+  setFormControlEnabled(
+    randomDitheringTypeSelect,
+    usesRandomMode,
+    "Random mode is only used by random dithering.",
+  );
+  setFormControlEnabled(
+    orderedDitheringMatrixW,
+    usesOrderedMatrix,
+    "Matrix size is only used by ordered/Bayer dithering.",
+  );
+  setFormControlEnabled(
+    orderedDitheringMatrixH,
+    usesOrderedMatrix,
+    "Matrix size is only used by ordered/Bayer dithering.",
+  );
+  setFormControlEnabled(
+    processingEngineSelect,
+    usesWasmEngine,
+    "Engine selection only affects RGB error diffusion.",
+  );
+  setFormControlEnabled(
+    edgePreservationStrengthInput,
+    edgePreservationCheckbox.checked,
+    "Enable edge core preservation to adjust its strength.",
+  );
+  setFormControlEnabled(
+    edgeAntialiasingStrengthInput,
+    edgeAntialiasingCheckbox.checked,
+    "Enable anti-tooth edge banding to adjust its strength.",
+  );
+
+  setOptionDisabled(
+    processingEngineSelect,
+    "wasm",
+    !canUseWasmEngine,
+    "WASM is only available for RGB error diffusion.",
+  );
+  selectFirstEnabledOption(processingEngineSelect);
 }
 
 function withAutoWhitePreservation(
@@ -644,6 +930,9 @@ function withAutoWhitePreservation(
 }
 
 function getCanvasDitherOptionsFromUI(palette: PaletteColorEntry[]) {
+  const edgePreservation = getEdgePreservationFromUI();
+  const edgeAntialiasing = getEdgeAntialiasingFromUI();
+
   return {
     ditheringType: ditheringTypeSelect.value,
     errorDiffusionMatrix: errorDiffusionMatrixSelect.value,
@@ -656,13 +945,18 @@ function getCanvasDitherOptionsFromUI(palette: PaletteColorEntry[]) {
     palette,
     colorMatching: colorMatchingSelect.value as DitherImageOptions["colorMatching"],
     processingEngine: processingEngineSelect.value as DitherProcessingEngine,
+    ...(edgePreservation.enabled ? { edgePreservation } : {}),
+    ...(edgeAntialiasing.enabled ? { edgeAntialiasing } : {}),
     calibrate: true,
   };
 }
 
 function getImageAdjustmentOptionsFromUI(): AutoImageAdjustmentOptions {
+  const clarity = getClarityFromUI();
+
   return {
     toneMapping: getToneMappingFromUI(),
+    ...(clarity ? { clarity } : {}),
     dynamicRangeCompression: getDynamicRangeCompressionFromUI(),
   };
 }
@@ -686,6 +980,7 @@ function pickImageAdjustmentOptions(
 ): AutoImageAdjustmentOptions {
   return {
     ...(options?.toneMapping ? { toneMapping: options.toneMapping } : {}),
+    ...(options?.clarity ? { clarity: options.clarity } : {}),
     ...(options?.dynamicRangeCompression
       ? { dynamicRangeCompression: options.dynamicRangeCompression }
       : {}),
@@ -710,6 +1005,12 @@ function pickCanvasDitherOptions(
       ? { serpentine: options.serpentine }
       : {}),
     ...(options?.colorMatching ? { colorMatching: options.colorMatching } : {}),
+    ...(options?.edgePreservation
+      ? { edgePreservation: options.edgePreservation }
+      : {}),
+    ...(options?.edgeAntialiasing
+      ? { edgeAntialiasing: options.edgeAntialiasing }
+      : {}),
   };
 }
 
@@ -771,9 +1072,12 @@ function getAutoAnalysisSuggestions(palette: PaletteColorEntry[]) {
 
 function getAutoDitherOptionsFromUI(palette: PaletteColorEntry[]) {
   const suggestion = getSelectedAutoSuggestion();
+  const imageAdjustmentOptions = getImageAdjustmentOptionsFromUI();
   const dynamicRangeCompression = withAutoWhitePreservation(
     getDynamicRangeCompressionFromUI(),
   );
+  const edgePreservation = getEdgePreservationFromUI();
+  const edgeAntialiasing = getEdgeAntialiasingFromUI();
 
   return {
     ...suggestion?.ditherOptions,
@@ -788,8 +1092,10 @@ function getAutoDitherOptionsFromUI(palette: PaletteColorEntry[]) {
     palette,
     colorMatching: colorMatchingSelect.value as DitherImageOptions["colorMatching"],
     processingEngine: processingEngineSelect.value as DitherProcessingEngine,
+    ...(edgePreservation.enabled ? { edgePreservation } : {}),
+    ...(edgeAntialiasing.enabled ? { edgeAntialiasing } : {}),
     calibrate: true,
-    toneMapping: getToneMappingFromUI(),
+    ...imageAdjustmentOptions,
     dynamicRangeCompression,
   };
 }
@@ -806,20 +1112,25 @@ function getAutoDitherWithManualAdjustmentsOptionsFromUI(
 function isToneMappingNeutral(toneMapping: DitherImageOptions["toneMapping"]) {
   if (!toneMapping) return true;
 
-  const mode = toneMapping.mode ?? "contrast";
-  const exposure = toneMapping.exposure ?? 1;
-  const saturation = toneMapping.saturation ?? 1;
+  const mode = toneMapping.mode;
+  const exposure = toneMapping.exposure ?? 0;
+  const saturation = toneMapping.saturation ?? 0;
+  const contrast = toneMapping.contrast ?? 0;
+  const strength = toneMapping.strength ?? (mode === "scurve" ? 0.9 : 0);
 
-  if (!numbersEqual(exposure, 1) || !numbersEqual(saturation, 1)) {
+  if (!numbersEqual(exposure, 0) || !numbersEqual(saturation, 0)) {
     return false;
   }
 
   if (mode === "off") return true;
   if (mode === "contrast") {
-    return numbersEqual(toneMapping.contrast ?? 1, 1);
+    return numbersEqual(contrast, 0);
+  }
+  if (mode === "scurve") {
+    return numbersEqual(strength, 0);
   }
 
-  return false;
+  return numbersEqual(contrast, 0) && numbersEqual(strength, 0);
 }
 
 function isDynamicRangeNeutral(
@@ -839,6 +1150,10 @@ function getCompactImageAdjustmentOptions(
     configOptions.toneMapping = options.toneMapping;
   }
 
+  if (options.clarity && !numbersEqual(options.clarity.amount, 0)) {
+    configOptions.clarity = options.clarity;
+  }
+
   if (!isDynamicRangeNeutral(options.dynamicRangeCompression)) {
     configOptions.dynamicRangeCompression = options.dynamicRangeCompression;
   }
@@ -849,6 +1164,14 @@ function getCompactImageAdjustmentOptions(
 
   if (options.paperNormalization) {
     configOptions.paperNormalization = options.paperNormalization;
+  }
+
+  if (options.edgePreservation?.enabled) {
+    configOptions.edgePreservation = options.edgePreservation;
+  }
+
+  if (options.edgeAntialiasing?.enabled) {
+    configOptions.edgeAntialiasing = options.edgeAntialiasing;
   }
 
   return configOptions;
@@ -955,6 +1278,10 @@ function getCompactDitherOptions(options: Partial<DitherImageOptions>) {
 
   if (options.toneMapping) {
     configOptions.toneMapping = options.toneMapping;
+  }
+
+  if (options.clarity) {
+    configOptions.clarity = options.clarity;
   }
 
   if (options.dynamicRangeCompression) {
@@ -1237,11 +1564,7 @@ function updateAutoRecommendation(suggestion: ProcessingSuggestion | null) {
 }
 
 function canUseProcessingWorker() {
-  if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") {
-    return false;
-  }
-
-  return true;
+  return typeof Worker !== "undefined";
 }
 
 function putImageDataOnCanvas(
@@ -1253,6 +1576,56 @@ function putImageDataOnCanvas(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Unable to draw processed image data.");
   ctx.putImageData(imageData, 0, 0);
+}
+
+function getProcessingWorker() {
+  if (!processingWorker) {
+    processingWorker = new Worker(
+      new URL("./demo/processing-worker.ts", import.meta.url),
+      { type: "module" },
+    );
+  }
+
+  return processingWorker;
+}
+
+function revokeDownloadUrl(link: HTMLAnchorElement) {
+  const url = downloadObjectUrls.get(link);
+  if (!url) return;
+
+  URL.revokeObjectURL(url);
+  downloadObjectUrls.delete(link);
+}
+
+function markDownloadStale(link: HTMLAnchorElement) {
+  revokeDownloadUrl(link);
+  link.href = "#";
+}
+
+function setupCanvasDownload(
+  link: HTMLAnchorElement,
+  canvas: HTMLCanvasElement,
+) {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+
+      revokeDownloadUrl(link);
+      const url = URL.createObjectURL(blob);
+      downloadObjectUrls.set(link, url);
+
+      const generatedLink = document.createElement("a");
+      generatedLink.href = url;
+      generatedLink.download = link.download;
+      generatedLink.click();
+    }, "image/png");
+  });
+}
+
+function setupCanvasDownloads() {
+  setupCanvasDownload(downloadLink, outputCanvas);
+  setupCanvasDownload(downloadDeviceColorsLink, deviceColorsCanvas);
 }
 
 async function renderProcessedCanvases(
@@ -1275,20 +1648,13 @@ async function renderProcessedCanvases(
 
   const imageData = ctx.getImageData(0, 0, inputCanvas.width, inputCanvas.height);
   const id = ++workerRequestId;
-  const worker = new Worker(
-    new URL("./demo/processing-worker.ts", import.meta.url),
-    { type: "module" },
-  );
-  processingWorker = worker;
+  const worker = getProcessingWorker();
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
       worker.removeEventListener("message", onMessage);
       worker.removeEventListener("error", onError);
-      if (processingWorker === worker) {
-        processingWorker = null;
-      }
       if (cancelProcessingWorkerRequest === cancelCurrentRequest) {
         cancelProcessingWorkerRequest = null;
       }
@@ -1298,6 +1664,9 @@ async function renderProcessedCanvases(
       settled = true;
       cleanup();
       worker.terminate();
+      if (processingWorker === worker) {
+        processingWorker = null;
+      }
       reject(new DOMException("Processing request was superseded.", "AbortError"));
     };
     const onError = (event: ErrorEvent) => {
@@ -1305,6 +1674,9 @@ async function renderProcessedCanvases(
       settled = true;
       cleanup();
       worker.terminate();
+      if (processingWorker === worker) {
+        processingWorker = null;
+      }
       reject(event.error ?? new Error(event.message));
     };
     const onMessage = (
@@ -1320,9 +1692,12 @@ async function renderProcessedCanvases(
       if (event.data.id !== id) return;
       settled = true;
       cleanup();
-      worker.terminate();
 
       if (event.data.error) {
+        worker.terminate();
+        if (processingWorker === worker) {
+          processingWorker = null;
+        }
         reject(new Error(event.data.error));
         return;
       }
@@ -1403,8 +1778,9 @@ async function processImage() {
   }
   if (token !== processToken) return;
 
-  downloadLink.href = outputCanvas.toDataURL("image/png");
-  downloadDeviceColorsLink.href = deviceColorsCanvas.toDataURL("image/png");
+  drawHistogramPreview(histogramPreviewCanvas, adjustedCanvas);
+  markDownloadStale(downloadLink);
+  markDownloadStale(downloadDeviceColorsLink);
 }
 
 fileInput.addEventListener("change", async () => {
@@ -1414,6 +1790,7 @@ fileInput.addEventListener("change", async () => {
   const src = URL.createObjectURL(file);
   const img = await loadImage(src);
   lastImage = img;
+  applyImageOrientationToUI(img);
   selectedSampleUrl = "";
   autoControlsDirty = false;
   updateSelectedSampleButton();
@@ -1423,6 +1800,7 @@ fileInput.addEventListener("change", async () => {
 
 function refreshControlState() {
   updatePalettePreviews();
+  updateCanvasDitherControlAvailability();
   updateConfigOutput();
 
   document
@@ -1433,10 +1811,15 @@ function refreshControlState() {
       ) as HTMLInputElement | null;
       if (input) output.value = input.value;
     });
-
-  const toneMode = toneModeSelect.value;
-  document.querySelectorAll<HTMLElement>("[data-tone-panel]").forEach((el) => {
-    el.hidden = el.dataset.tonePanel !== toneMode;
+  drawToneCurvePreview(toneCurvePreviewCanvas, getToneMappingFromUI());
+  drawRangeFittingPreview({
+    canvas: rangeFittingPreviewCanvas,
+    inputCanvas,
+    toneMapping: getToneMappingFromUI(),
+    dynamicRange: getDynamicRangeCompressionFromUI(),
+    palette: getSelectedPaletteOption().palette,
+    lowPercentile: readNumber(lowPercentileInput, 0.01),
+    highPercentile: readNumber(highPercentileInput, 0.99),
   });
 
   const showAutoRange = dynamicRangeModeSelect.value === "auto";
@@ -1482,10 +1865,14 @@ const controls = [
   serpentineCheckbox,
   colorMatchingSelect,
   processingEngineSelect,
-  toneModeSelect,
+  edgePreservationCheckbox,
+  edgePreservationStrengthInput,
+  edgeAntialiasingCheckbox,
+  edgeAntialiasingStrengthInput,
   exposureInput,
   saturationInput,
   contrastInput,
+  clarityInput,
   scurveStrengthInput,
   shadowBoostInput,
   highlightCompressInput,
@@ -1570,6 +1957,7 @@ configTabButtons.forEach((button) => {
 [screenResolutionSelect, orientationSelect, imageFitSelect].forEach(
   (select) => {
     select.addEventListener("change", () => {
+      syncWorkspaceToggleControls();
       saveDeviceTestConfig();
       setDeviceTestStatus("");
       autoControlsDirty = false;

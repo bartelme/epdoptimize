@@ -18,9 +18,25 @@ You can order our Spectra 6 eInk picture frame [here](https://paperlesspaper.de/
 
 ## Supported Displays
 
-- [Spectra 6](https://www.eink.com/brand?bookmark=Spectra)
+- [Any Spectra 6 panel](https://www.eink.com/brand?bookmark=Spectra)
 - [AcEP / Gallery](https://www.eink.com/brand/detail/Gallery)
 - Custom palettes
+
+![Intro image](https://raw.githubusercontent.com/paperlesspaper/epdoptimize/refs/heads/main/intro-image.jpg)
+
+## Features
+
+- **Calibrated display palettes:** Dither against measured display colors, then export native device colors.
+- **Single palette config:** Palette entries contain `name`, `color`, and `deviceColor`.
+- **Multiple dithering modes:** Error diffusion, ordered dithering, random dithering, blue-noise/whole-image variants, and quantization-only conversion.
+- **Advanced tone mapping:** Exposure, saturation, contrast, and S-curve controls inspired by [epaper-image-convert](https://github.com/aitjcize/epaper-image-convert).
+- **Dynamic range compression:** LAB lightness remapping into the target display range.
+- **Color matching modes:** RGB, LAB, or chroma-aware palette matching.
+- **Optional edge handling:** Preserve hard line-art/text edges or smooth antialiased edge bands after dithering.
+- **Automatic processing suggestions:** Heuristically classify the image, score presets, and suggest dither options for the selected palette.
+- **Interactive demo and rating tool:** Sample images, palette previews, automatic/manual processing controls, pairwise A/B voting, downloads, compact config JSON, and copyable JS example.
+
+![Screenshot of the UI](/screenshot-with-frame.png)
 
 Built-in palette exports currently include:
 
@@ -32,19 +48,6 @@ Built-in palette exports currently include:
 - `spectra6legacyPalette` (not recommended)
 - `acepPalette`
 - `gameboyPalette`
-
-![Intro image](https://raw.githubusercontent.com/paperlesspaper/epdoptimize/refs/heads/main/intro-image.jpg)
-
-## Features
-
-- **Calibrated display palettes:** Dither against measured display colors, then export native device colors.
-- **Single palette config:** Palette entries contain `name`, `color`, and `deviceColor`.
-- **Multiple dithering modes:** Error diffusion, ordered dithering, random dithering, and quantization-only conversion.
-- **Advanced tone mapping:** Exposure, saturation, contrast, and S-curve controls inspired by [epaper-image-convert](https://github.com/aitjcize/epaper-image-convert).
-- **Dynamic range compression:** LAB lightness remapping into the target display range.
-- **Color matching modes:** RGB or LAB palette matching.
-- **Automatic processing suggestions:** Heuristically classify the image, score presets, and suggest dither options for the selected palette.
-- **Interactive demo and rating tool:** Sample images, palette previews, automatic/manual processing controls, pairwise A/B voting, downloads, compact config JSON, and copyable JS example.
 
 ## Installation
 
@@ -96,7 +99,10 @@ import {
   suggestCanvasProcessingOptions,
 } from "epdoptimize";
 
-const suggestion = suggestCanvasProcessingOptions(inputCanvas, aitjcizeSpectra6Palette);
+const suggestion = suggestCanvasProcessingOptions(
+  inputCanvas,
+  aitjcizeSpectra6Palette,
+);
 
 await ditherImage(inputCanvas, ditheredCanvas, {
   ...suggestion.ditherOptions,
@@ -171,6 +177,7 @@ The split result shapes are:
 
 ```ts
 type AutoImageAdjustmentOptions = {
+  clarity?: ClarityOptions;
   toneMapping?: ToneMappingOptions;
   dynamicRangeCompression?: DynamicRangeCompressionOptions | boolean;
   levelCompression?: LevelCompressionOptions;
@@ -280,11 +287,11 @@ const config = {
   imageAdjustmentOptions: {
     toneMapping: {
       mode: "scurve",
-      exposure: 1.05,
-      saturation: 1.3,
+      exposure: 0.07,
+      saturation: 0.3,
       strength: 0.7,
       shadowBoost: 0.05,
-      highlightCompress: 1.2,
+      highlightCompress: -1.2,
       midpoint: 0.5,
     },
   },
@@ -422,6 +429,8 @@ Array<{
 }>;
 ```
 
+The legacy `{ originalColors, replaceColors }` form is still supported.
+
 ### `classifyImageStyle(imageData, options)`
 
 Heuristically classifies image data as a photo or illustration and reports a
@@ -446,6 +455,8 @@ tile ratios (`photoTileRatio`, `flatTileRatio`, `textTileRatio`,
 `gradientTileRatio`).
 
 For canvas input, use `classifyCanvasImageStyle(canvas, options)`.
+Convenience predicates `isPhotoImage(result)` and
+`isIllustrationImage(result)` are also exported.
 
 Result shape:
 
@@ -505,11 +516,20 @@ Result shape:
   classification: ImageStyleClassification;
   imageKind: ImageKind;
   intent: AutoProcessingIntent;
+  strategy?: "legacy" | "layered";
   ditherOptions: Partial<DitherImageOptions>;
   reasons: string[];
   scores: Record<string, number>;
+  pipelineSteps?: ProcessingPipelineStep[];
 }
 ```
+
+For a staged recommendation that also describes the detection, preset,
+adjustment, and output phases, use `suggestLayeredProcessingOptions(imageData,
+palette, options)` or `suggestLayeredCanvasProcessingOptions(canvas, palette,
+options)`. The ImageData variants of the split helpers are
+`suggestImageAdjustmentOptions(imageData, palette, options)` and
+`suggestDitherOptions(imageData, palette, options)`.
 
 ### Built-In Palette Exports
 
@@ -519,6 +539,8 @@ import {
   gameboyPalette,
   spectra6legacyPalette,
   spectra6Palette,
+  spectra6OriginalPalette,
+  spectra6OriginalPreviewPalette,
   aitjcizeSpectra6Palette,
   acepPalette,
 } from "epdoptimize";
@@ -549,34 +571,39 @@ import {
   getProcessingPreset,
   getProcessingPresetNames,
   getProcessingPresetOptions,
+  PROCESSING_PRESETS,
 } from "epdoptimize";
 ```
 
 - `getProcessingPreset(name)`: Returns the full preset definition.
 - `getProcessingPresetNames()`: Returns preset names.
 - `getProcessingPresetOptions()`: Returns `{ value, title, description }` options for UI controls.
+- `PROCESSING_PRESETS`: Exposes the preset registry for callers that need the raw definitions.
 
 ## Dithering Options
 
-| Option                    | Type                                | Default            | Description                                                                                                                                                                                                                                        |
-| ------------------------- | ----------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `palette`                 | string / string[] / palette entries | `"default"`        | Palette to use for quantization. Prefer a built-in palette export or combined palette entries with `color` and `deviceColor`; plain hex arrays work for dither-only previews.                                                                      |
+| Option                    | Type                                | Default            | Description                                                                                                                                                                                                                                                                 |
+| ------------------------- | ----------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `palette`                 | string / string[] / palette entries | `"default"`        | Palette to use for quantization. Prefer a built-in palette export or combined palette entries with `color` and `deviceColor`; plain hex arrays work for dither-only previews.                                                                                               |
 | `processingPreset`        | string                              | `undefined`        | Preset name. Options: `balanced`, `dynamic`, `vivid`, `soft`, `grayscale`, `restore`, `posterScan`. Presets fill tone mapping, dynamic range compression, color matching, and diffusion defaults unless overridden. Use `suggestProcessingOptions` for automatic selection. |
-| `ditheringType`           | string                              | `"errorDiffusion"` | Main dithering mode. Options: `errorDiffusion`, `ordered`, `random`, `quantizationOnly`, `hueMix`. `hueMix` is experimental and targets smooth synthetic hue gradients.                                                                            |
-| `processingEngine`        | string                              | `"js"`             | Processing engine. Options: `js`, `wasm`, `auto`. WASM currently accelerates RGB error diffusion and falls back to JS for unsupported combinations.                                                                                                |
-| `errorDiffusionMatrix`    | string                              | `"floydSteinberg"` | Error diffusion kernel. Options include `floydSteinberg`, `atkinson`, `falseFloydSteinberg`, `jarvis`, `stucki`, `burkes`, `sierra3`, `sierra2`, `sierra2-4a`.                                                                                     |
-| `algorithm`               | string                              | `undefined`        | Backwards-compatible alias for `errorDiffusionMatrix`.                                                                                                                                                                                             |
-| `serpentine`              | boolean                             | `false`            | Alternates scan direction on each row for error diffusion.                                                                                                                                                                                         |
-| `orderedDitheringType`    | string                              | `"bayer"`          | Type of ordered dithering. Currently `bayer`.                                                                                                                                                                                                      |
-| `orderedDitheringMatrix`  | [number, number]                    | `[4, 4]`           | Size of the Bayer matrix for ordered dithering.                                                                                                                                                                                                    |
-| `randomDitheringType`     | string                              | `"blackAndWhite"`  | Random mode. Options: `blackAndWhite`, `rgb`.                                                                                                                                                                                                      |
-| `colorMatching`           | string                              | `"rgb"`            | Palette distance model. Options: `rgb`, `lab`, `chroma`. `chroma` is experimental and tries to keep saturated pastel colors from collapsing into white.                                                                                           |
-| `paperNormalization`      | object                              | `undefined`        | Optional scan cleanup. `{ mode: "warmPaper" }` neutralizes warm low-saturation paper, anchors dark neutral ink, and preserves red poster ink before tone mapping.                                                                                   |
-| `toneMapping`             | object                              | `undefined`        | Exposure, saturation, contrast, or S-curve preprocessing.                                                                                                                                                                                          |
-| `dynamicRangeCompression` | object / boolean                    | `undefined`        | LAB lightness compression. Use `{ mode: "display" }`, `{ mode: "auto" }`, or `{ mode: "off" }`. Auto suggestions enable `preserveWhite` so p99/background-white pixels are not pushed below the palette white during range fitting.                 |
-| `levelCompression`        | object                              | `undefined`        | Optional legacy/preprocessing range remap with `perChannel` or `luma` mode.                                                                                                                                                                        |
-| `sampleColorsFromImage`   | boolean                             | `false`            | Reserved for image-derived palettes.                                                                                                                                                                                                               |
-| `numberOfSampleColors`    | number                              | `10`               | Number of colors to sample when image-derived palettes are enabled.                                                                                                                                                                                |
+| `ditheringType`           | string                              | `"errorDiffusion"` | Main dithering mode. Options: `errorDiffusion`, `ordered`, `random`, `quantizationOnly`, `hueMix`, `blueNoise`, `simple2D`, `riemersma`, plus DitherIt-backed aliases `ditherItErrorDiffusion`, `ditherItOrdered`, `ditherItBlueNoise`, `ditherItSimple2D`, and `ditherItRiemersma`. `hueMix` is experimental and targets smooth synthetic hue gradients. |
+| `processingEngine`        | string                              | `"auto"`           | Processing engine. Options: `js`, `wasm`, `auto`. WASM currently accelerates RGB error diffusion and falls back to JS for unsupported combinations.                                                                                                                         |
+| `errorDiffusionMatrix`    | string                              | `"floydSteinberg"` | Error diffusion kernel. Options include `floydSteinberg`, `atkinson`, `falseFloydSteinberg`, `jarvis`, `jarvisJudiceNinke`, `stucki`, `burkes`, `sierra3`, `sierra2`, `sierra2-4a`, `fan`, `shiauFan`, `shiauFan2`.                                                         |
+| `algorithm`               | string                              | `undefined`        | Backwards-compatible alias for `errorDiffusionMatrix`.                                                                                                                                                                                                                      |
+| `serpentine`              | boolean                             | `false`            | Alternates scan direction on each row for error diffusion.                                                                                                                                                                                                                  |
+| `orderedDitheringType`    | string                              | `"bayer"`          | Type of ordered dithering. Currently `bayer`.                                                                                                                                                                                                                               |
+| `orderedDitheringMatrix`  | [number, number]                    | `[4, 4]`           | Size of the Bayer matrix for ordered dithering. Values are normalized to 2, 4, 8, or 16.                                                                                                                                                                                    |
+| `randomDitheringType`     | string                              | `"blackAndWhite"`  | Random mode. Options: `blackAndWhite`, `rgb`.                                                                                                                                                                                                                               |
+| `colorMatching`           | string                              | `"rgb"`            | Palette distance model. Options: `rgb`, `lab`, `chroma`. `chroma` is experimental and tries to keep saturated pastel colors from collapsing into white.                                                                                                                     |
+| `paperNormalization`      | object                              | `undefined`        | Optional scan cleanup. `{ mode: "warmPaper" }` neutralizes warm low-saturation paper, anchors dark neutral ink, and preserves red poster ink before tone mapping.                                                                                                           |
+| `clarity`                 | object                              | `undefined`        | Midtone local-contrast adjustment before tone and range fitting. Use `{ amount: -1..1, radius?: 1..4, midtone?: number }`; positive values sharpen local contrast and negative values soften it.                                                                            |
+| `toneMapping`             | object                              | `undefined`        | Exposure, saturation, contrast, or S-curve preprocessing.                                                                                                                                                                                                                   |
+| `dynamicRangeCompression` | object / boolean                    | `undefined`        | LAB lightness compression. Use `{ mode: "display" }`, `{ mode: "auto" }`, or `{ mode: "off" }`. Auto suggestions enable `preserveWhite` so p99/background-white pixels are not pushed below the palette white during range fitting.                                         |
+| `levelCompression`        | object                              | `undefined`        | Optional legacy/preprocessing range remap with `perChannel` or `luma` mode.                                                                                                                                                                                                 |
+| `edgePreservation`        | object                              | `undefined`        | Optional edge-core cleanup after dithering. Use `{ enabled: true, strength?: 0..1, threshold?: number, radius?: number }` to replace strong text/line-art edges with direct palette quantization.                                                                            |
+| `edgeAntialiasing`        | object                              | `undefined`        | Optional antialiased edge-band cleanup after dithering. Use `{ enabled: true, strength?: 0..1, threshold?: number, bandRadius?: number, localRadius?: number }` to constrain transition bands to nearby palette colors.                                                       |
+| `sampleColorsFromImage`   | boolean                             | `false`            | Reserved for image-derived palettes.                                                                                                                                                                                                                                        |
+| `numberOfSampleColors`    | number                              | `10`               | Number of colors to sample when image-derived palettes are enabled.                                                                                                                                                                                                         |
 
 ## Tone Mapping
 
@@ -585,13 +612,18 @@ Tone mapping runs before palette matching.
 ```js
 await ditherImage(inputCanvas, ditheredCanvas, {
   palette,
+  clarity: {
+    amount: 0.35,
+    radius: 2,
+    midtone: 1.2,
+  },
   toneMapping: {
-    mode: "scurve",
-    exposure: 1.1,
-    saturation: 1.4,
+    exposure: 0.14,
+    saturation: 0.4,
+    contrast: 0.08,
     strength: 0.8,
     shadowBoost: 0.1,
-    highlightCompress: 1.4,
+    highlightCompress: -1.4,
     midpoint: 0.5,
   },
 });
@@ -599,13 +631,13 @@ await ditherImage(inputCanvas, ditheredCanvas, {
 
 Tone mapping options:
 
-- `mode`: `off`, `contrast`, or `scurve`.
-- `exposure`: Multiplies brightness before tone shaping.
-- `saturation`: Multiplies color saturation.
-- `contrast`: Contrast multiplier for `contrast` mode.
-- `strength`: S-curve strength for `scurve` mode.
-- `shadowBoost`: Lifts dark values in `scurve` mode.
-- `highlightCompress`: Compresses bright values in `scurve` mode.
+- `mode`: Optional legacy selector. Use `off`, `contrast`, or `scurve` to force one behavior. Omit it to apply contrast and S-curve controls together.
+- `exposure`: Exposure adjustment in stops. `0` is neutral, `1` doubles brightness, and `-1` halves it.
+- `saturation`: Saturation adjustment. `0` is neutral, `0.4` means 1.4x, and `-1` removes saturation.
+- `contrast`: Contrast adjustment. `0` is neutral, `0.08` means 1.08x, and negative values reduce contrast.
+- `strength`: S-curve strength. Use `0` to disable S-curve shaping.
+- `shadowBoost`: Lifts dark values when S-curve strength is active.
+- `highlightCompress`: Adjusts bright values when S-curve strength is active. Negative values pull highlights down; positive values lift them.
 - `midpoint`: S-curve midpoint.
 
 ## Dynamic Range Compression
@@ -623,6 +655,7 @@ await ditherImage(inputCanvas, ditheredCanvas, {
     preserveWhite: true,
     whitePreservePercentile: 0.99,
     whitePreserveMinLuma: 150,
+    whitePreserveMaxSaturation: 0.18,
   },
 });
 ```
@@ -633,11 +666,13 @@ Modes:
 - `display`: Compress into the lightness range of the selected palette.
 - `auto`: Uses percentile clipping before compression.
 
-`preserveWhite` protects the brightest/background-white source pixels after
-range and level fitting. When enabled, pixels at or above
-`whitePreservePercentile` are snapped back to the palette white if processing
-would make them darker than that white point. Auto suggestions enable this by
-default for active range fitting.
+`preserveWhite` protects the brightest low-saturation/background-white source
+pixels after range and level fitting. When enabled, low-saturation pixels at or
+above `whitePreservePercentile` are snapped back to the palette white if
+processing would make them darker than that white point.
+`whitePreserveMaxSaturation` controls which source pixels are allowed to count
+as background white. Auto suggestions enable this by default for active range
+fitting.
 
 ## Dithering Algorithms
 
@@ -649,17 +684,24 @@ Dithering creates the impression of intermediate colors by distributing quantiza
 | `atkinson`            | Atkinson diffusion. Lighter diffusion pattern with a distinctive high-contrast look. |
 | `falseFloydSteinberg` | Simplified Floyd-Steinberg. Faster, slightly different texture.                      |
 | `jarvis`              | Jarvis, Judice, and Ninke. Smooth gradients, more blur.                              |
+| `jarvisJudiceNinke`   | Jarvis-Judice-Ninke kernel from DitherIt v3.                                         |
 | `stucki`              | Similar to Jarvis with different weights. Balances smoothness and sharpness.         |
 | `burkes`              | Simplified Stucki. Fewer neighbors and less computation.                             |
 | `sierra3`             | Sierra-3. High quality with less blur than Jarvis.                                   |
 | `sierra2`             | Reduced Sierra-3. Fewer neighbors and faster processing.                             |
-| `sierra2-4a`          | Lightweight Sierra variant for speed-sensitive conversions.                          |
+| `sierra2-4a`          | Sierra-2-4A variant for speed-sensitive conversions.                                 |
+| `fan`                 | Fan diffusion kernel from DitherIt v3.                                               |
+| `shiauFan`            | Shiau-Fan diffusion kernel from DitherIt v3.                                         |
+| `shiauFan2`           | Wider Shiau-Fan variant from DitherIt v3.                                            |
+| `simple2D`            | Whole-image mode that splits error between the next pixel and next row.              |
+| `riemersma`           | Whole-image mode that diffuses error along a Hilbert curve.                          |
+| `blueNoise`           | Threshold mode using a 64x64 high-frequency blue-noise style tile.                   |
 
 ## How It Works
 
 1. Load pixels from the source canvas.
 2. Apply optional tone mapping and dynamic range compression.
-3. Quantize or dither pixels into the calibrated palette `color` values.
+3. Quantize or dither pixels into the calibrated palette `color` values, with optional edge handling.
 4. Use `replaceColors` to replace calibrated `color` values with native `deviceColor` values.
 5. Export the device-color canvas as PNG or another format.
 
@@ -670,6 +712,7 @@ Dithering creates the impression of intermediate colors by distributing quantiza
 
 ## Credits
 
+- [DitherIt](https://ditherit.com/)
 - [Dither me this](https://github.com/DitheringIdiot/dither-me-this)
 - [Inkify](https://github.com/cmdwtf/Inkify)
 - [epaper-image-convert](https://github.com/aitjcize/epaper-image-convert)
@@ -677,4 +720,4 @@ Dithering creates the impression of intermediate colors by distributing quantiza
 
 ---
 
-Contributions and feedback are welcome.
+Contributions and feedback are welcome :)

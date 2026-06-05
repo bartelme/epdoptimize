@@ -47,6 +47,12 @@ export const screenResolutionSelect = $(
 ) as HTMLSelectElement;
 export const orientationSelect = $("orientationSelect") as HTMLSelectElement;
 export const imageFitSelect = $("imageFitSelect") as HTMLSelectElement;
+export const orientationToggleButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>("[data-orientation-option]"),
+);
+export const imageFitToggleButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>("[data-image-fit-option]"),
+);
 export const paperIdInput = $("paperIdInput") as HTMLInputElement;
 export const apiKeyInput = $("apiKeyInput") as HTMLInputElement;
 export const testOnDeviceButton = $("testOnDeviceButton") as HTMLButtonElement;
@@ -83,6 +89,18 @@ export const colorMatchingSelect = $("colorMatching") as HTMLSelectElement;
 export const processingEngineSelect = $(
   "processingEngine",
 ) as HTMLSelectElement;
+export const edgePreservationCheckbox = $(
+  "edgePreservation",
+) as HTMLInputElement;
+export const edgePreservationStrengthInput = $(
+  "edgePreservationStrength",
+) as HTMLInputElement;
+export const edgeAntialiasingCheckbox = $(
+  "edgeAntialiasing",
+) as HTMLInputElement;
+export const edgeAntialiasingStrengthInput = $(
+  "edgeAntialiasingStrength",
+) as HTMLInputElement;
 export const autoRecommendationTitle = $(
   "autoRecommendationTitle",
 ) as HTMLElement;
@@ -90,16 +108,22 @@ export const autoRecommendationReasons = $(
   "autoRecommendationReasons",
 ) as HTMLUListElement;
 
-export const toneModeSelect = $("toneMode") as HTMLSelectElement;
 export const exposureInput = $("exposure") as HTMLInputElement;
 export const saturationInput = $("saturation") as HTMLInputElement;
 export const contrastInput = $("contrast") as HTMLInputElement;
+export const clarityInput = $("clarity") as HTMLInputElement;
 export const scurveStrengthInput = $("scurveStrength") as HTMLInputElement;
 export const shadowBoostInput = $("shadowBoost") as HTMLInputElement;
 export const highlightCompressInput = $(
   "highlightCompress",
 ) as HTMLInputElement;
 export const midpointInput = $("midpoint") as HTMLInputElement;
+export const toneCurvePreviewCanvas = $(
+  "toneCurvePreview",
+) as HTMLCanvasElement;
+export const histogramPreviewCanvas = $(
+  "histogramPreview",
+) as HTMLCanvasElement;
 
 export const dynamicRangeModeSelect = $(
   "dynamicRangeMode",
@@ -109,3 +133,6 @@ export const dynamicRangeStrengthInput = $(
 ) as HTMLInputElement;
 export const lowPercentileInput = $("lowPercentile") as HTMLInputElement;
 export const highPercentileInput = $("highPercentile") as HTMLInputElement;
+export const rangeFittingPreviewCanvas = $(
+  "rangeFittingPreview",
+) as HTMLCanvasElement;

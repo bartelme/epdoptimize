@@ -433,9 +433,9 @@ function getRatingVariants(
         colorMatching: "lab",
         toneMapping: {
           mode: "contrast",
-          exposure: 1.03,
-          saturation: 0.95,
-          contrast: 1.16,
+          exposure: exposureAdjustmentFromMultiplier(1.03),
+          saturation: linearAdjustmentFromMultiplier(0.95),
+          contrast: linearAdjustmentFromMultiplier(1.16),
         },
       },
     },
@@ -521,27 +521,27 @@ function getContrastToneMapping(
   if (toneMapping?.mode === "contrast") {
     return {
       mode: "contrast",
-      exposure: toneMapping.exposure ?? 1,
-      saturation: toneMapping.saturation ?? 1,
-      contrast: Math.max(toneMapping.contrast ?? 1, 1),
+      exposure: toneMapping.exposure ?? 0,
+      saturation: toneMapping.saturation ?? 0,
+      contrast: Math.max(toneMapping.contrast ?? 0, 0),
     };
   }
 
   const strength = toneMapping?.strength ?? 0.72;
   const shadowBoost = toneMapping?.shadowBoost ?? 0;
-  const highlightCompress = toneMapping?.highlightCompress ?? 1;
+  const highlightCompress = toneMapping?.highlightCompress ?? 0;
   const contrast =
     1 +
     strength * 0.28 +
     shadowBoost * 0.18 +
-    Math.max(0, highlightCompress - 1) * 0.05 -
-    Math.max(0, 1 - highlightCompress) * 0.04;
+    Math.max(0, -highlightCompress) * 0.05 -
+    Math.max(0, highlightCompress) * 0.04;
 
   return {
     mode: "contrast",
-    exposure: toneMapping?.exposure ?? 1,
-    saturation: toneMapping?.saturation ?? 1,
-    contrast: clamp(contrast, 1, 1.42),
+    exposure: toneMapping?.exposure ?? 0,
+    saturation: toneMapping?.saturation ?? 0,
+    contrast: linearAdjustmentFromMultiplier(clamp(contrast, 1, 1.42)),
   };
 }
 
@@ -551,24 +551,27 @@ function getSCurveToneMapping(
   if (toneMapping?.mode === "scurve") {
     return {
       mode: "scurve",
-      exposure: toneMapping.exposure ?? 1,
-      saturation: toneMapping.saturation ?? 1,
+      exposure: toneMapping.exposure ?? 0,
+      saturation: toneMapping.saturation ?? 0,
       strength: toneMapping.strength ?? 0.72,
       shadowBoost: toneMapping.shadowBoost ?? 0.08,
-      highlightCompress: toneMapping.highlightCompress ?? 1.2,
+      highlightCompress: toneMapping.highlightCompress ?? -1.2,
       midpoint: toneMapping.midpoint ?? 0.5,
     };
   }
 
-  const contrast = toneMapping?.mode === "contrast" ? toneMapping.contrast ?? 1 : 1;
+  const contrast =
+    toneMapping?.mode === "contrast"
+      ? linearAdjustmentToMultiplier(toneMapping.contrast ?? 0)
+      : 1;
 
   return {
     mode: "scurve",
-    exposure: toneMapping?.exposure ?? 1,
-    saturation: toneMapping?.saturation ?? 1,
+    exposure: toneMapping?.exposure ?? 0,
+    saturation: toneMapping?.saturation ?? 0,
     strength: clamp((contrast - 1) / 0.35, 0.58, 0.95),
     shadowBoost: contrast >= 1.2 ? 0.08 : 0.05,
-    highlightCompress: contrast >= 1.2 ? 1.25 : 1.15,
+    highlightCompress: contrast >= 1.2 ? -1.25 : -1.15,
     midpoint: 0.5,
   };
 }
@@ -605,10 +608,10 @@ function getHueMixRgbVariants(naturalSuggestion: ProcessingSuggestion) {
     colorMatching: "rgb" as const,
     toneMapping: {
       mode: "scurve" as const,
-      saturation: 1.45,
+      saturation: linearAdjustmentFromMultiplier(1.45),
       strength: 0.72,
       shadowBoost: 0.08,
-      highlightCompress: 1.3,
+      highlightCompress: -1.3,
       midpoint: 0.5,
     },
     dynamicRangeCompression: { mode: "off" as const },
@@ -672,10 +675,10 @@ function getHueMixGradientBaseOptions(naturalSuggestion: ProcessingSuggestion) {
     colorMatching: "rgb" as const,
     toneMapping: {
       mode: "scurve" as const,
-      saturation: 1.45,
+      saturation: linearAdjustmentFromMultiplier(1.45),
       strength: 0.72,
       shadowBoost: 0.08,
-      highlightCompress: 1.3,
+      highlightCompress: -1.3,
       midpoint: 0.5,
     },
     dynamicRangeCompression: { mode: "off" as const },
@@ -716,9 +719,9 @@ function getBaselineRecommendation(
         ditheringType: "quantizationOnly",
         toneMapping: {
           mode: "contrast",
-          exposure: 1.05,
-          saturation: 1,
-          contrast: 1.18,
+          exposure: exposureAdjustmentFromMultiplier(1.05),
+          saturation: 0,
+          contrast: linearAdjustmentFromMultiplier(1.18),
         },
         dynamicRangeCompression: { mode: "display", strength: 0.75 },
       };
@@ -730,9 +733,9 @@ function getBaselineRecommendation(
         ditheringType: "quantizationOnly",
         toneMapping: {
           mode: "contrast",
-          exposure: 1,
-          saturation: 0.8,
-          contrast: 1.25,
+          exposure: 0,
+          saturation: linearAdjustmentFromMultiplier(0.8),
+          contrast: linearAdjustmentFromMultiplier(1.25),
         },
         dynamicRangeCompression: { mode: "display", strength: 0.65 },
       };
@@ -742,7 +745,7 @@ function getBaselineRecommendation(
         colorMatching: "rgb",
         errorDiffusionMatrix: "floydSteinberg",
         ditheringType: "quantizationOnly",
-        toneMapping: { mode: "off", exposure: 1, saturation: 1 },
+        toneMapping: { mode: "off", exposure: 0, saturation: 0 },
         dynamicRangeCompression: { mode: "off" },
       };
     case "flatIllustration":
@@ -760,11 +763,11 @@ function getBaselineRecommendation(
         ditheringType: "errorDiffusion",
         toneMapping: {
           mode: "scurve",
-          exposure: 1.08,
-          saturation: 1.25,
+          exposure: exposureAdjustmentFromMultiplier(1.08),
+          saturation: linearAdjustmentFromMultiplier(1.25),
           strength: 0.82,
           shadowBoost: 0.06,
-          highlightCompress: 1.35,
+          highlightCompress: -1.35,
           midpoint: 0.48,
         },
         dynamicRangeCompression: { mode: "display", strength: 0.85 },
@@ -850,11 +853,11 @@ function applyBaselinePaletteTuning(
     options.processingPreset = "grayscale";
     options.toneMapping = {
       mode: "scurve",
-      exposure: 1,
-      saturation: 0,
+      exposure: 0,
+      saturation: linearAdjustmentFromMultiplier(0),
       strength: 0.8,
       shadowBoost: 0.1,
-      highlightCompress: 1.4,
+      highlightCompress: -1.4,
       midpoint: 0.5,
     };
   } else if (paletteProfile.lumaRange <= 150) {
@@ -875,6 +878,18 @@ function getBestScore(scores: Record<string, number>) {
     (best, current) => (current[1] > best[1] ? current : best),
     ["balanced", -Infinity],
   )[0];
+}
+
+function exposureAdjustmentFromMultiplier(multiplier: number) {
+  return Number(Math.log2(multiplier).toFixed(3));
+}
+
+function linearAdjustmentFromMultiplier(multiplier: number) {
+  return Number((multiplier - 1).toFixed(3));
+}
+
+function linearAdjustmentToMultiplier(adjustment: number) {
+  return Math.max(0, adjustment + 1);
 }
 
 function clamp(value: number, min: number, max: number) {

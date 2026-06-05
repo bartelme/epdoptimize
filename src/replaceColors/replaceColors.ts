@@ -30,7 +30,7 @@ const hexToRgb = (h: string): RGB => {
   return rgb as RGB;
 };
 
-const colorKey = (rgb: RGB) => rgb.join(",");
+const colorKey = (rgb: RGB) => (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
 
 const isPaletteEntryArray = (
   palette: ReplaceColorsPalette | ReplaceColorsOptions
@@ -54,7 +54,7 @@ const createReplacementMap = (
         deviceColor: palette.replaceColors[index],
       }));
 
-  return new Map(
+  return new Map<number, RGB>(
     entries
       .filter((entry) => Boolean(entry.deviceColor))
       .map((entry) => [
@@ -79,12 +79,13 @@ export const replaceColors = (
   if (!destCtx) return;
 
   const imageData = fromCtx.getImageData(0, 0, width, height);
+  const data = imageData.data;
   let errorColors = 0;
   const replacementMap = createReplacementMap(palette);
 
-  for (let i = 0; i < imageData.data.length; i += 4) {
+  for (let i = 0; i < data.length; i += 4) {
     const replacement = replacementMap.get(
-      `${imageData.data[i]},${imageData.data[i + 1]},${imageData.data[i + 2]}`
+      (data[i] << 16) | (data[i + 1] << 8) | data[i + 2]
     );
 
     if (!replacement) {
@@ -92,9 +93,9 @@ export const replaceColors = (
       continue;
     }
 
-    imageData.data[i] = replacement[0];
-    imageData.data[i + 1] = replacement[1];
-    imageData.data[i + 2] = replacement[2];
+    data[i] = replacement[0];
+    data[i + 1] = replacement[1];
+    data[i + 2] = replacement[2];
   }
 
   if (errorColors > 0) {

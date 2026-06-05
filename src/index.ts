@@ -107,12 +107,15 @@ export {
 } from "./auto-processing";
 
 export type {
+  ClarityOptions,
   ColorMatchingMode,
   CanvasLike,
   DitherImageOptions,
   DitherProcessingEngine,
   DitheringType,
   DynamicRangeCompressionOptions,
+  EdgeAntialiasingOptions,
+  EdgePreservationOptions,
   ImageDataLike,
   ImageProcessingOptions,
   LevelCompressionOptions,

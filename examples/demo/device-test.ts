@@ -42,7 +42,9 @@ export function getSelectedOrientation(): ScreenOrientation {
 export function getOriginalImageOrientation(
   img: HTMLImageElement,
 ): ScreenOrientation {
-  return img.height > img.width ? "portrait" : "landscape";
+  const width = img.naturalWidth || img.width;
+  const height = img.naturalHeight || img.height;
+  return height > width ? "portrait" : "landscape";
 }
 
 export function getDeviceUploadOrientation(
@@ -50,7 +52,9 @@ export function getDeviceUploadOrientation(
 ): Exclude<ScreenOrientation, "original"> {
   const orientation = getSelectedOrientation();
   if (orientation !== "original") return orientation;
-  return img && img.height > img.width ? "portrait" : "landscape";
+  return img && getOriginalImageOrientation(img) === "portrait"
+    ? "portrait"
+    : "landscape";
 }
 
 export function getSelectedImageFit(): ImageFitMode {
@@ -72,8 +76,8 @@ export function loadDeviceTestConfig() {
         ? saved.orientation
         : DEFAULT_DEVICE_TEST_CONFIG.orientation;
     imageFitSelect.value =
-      saved.imageFit === "cover"
-        ? "cover"
+      saved.imageFit === "cover" || saved.imageFit === "contain"
+        ? saved.imageFit
         : DEFAULT_DEVICE_TEST_CONFIG.imageFit;
     paperIdInput.value =
       typeof saved.paperId === "string"

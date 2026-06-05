@@ -1,5 +1,5 @@
 import { applyImageAdjustments, ditherCanvas, replaceColors } from "../../src";
-import type { DitherImageOptions, PaletteColorEntry } from "../../src";
+import type { CanvasLike, DitherImageOptions, PaletteColorEntry } from "../../src";
 
 interface ProcessRequest {
   id: number;
@@ -25,28 +25,47 @@ const postWorkerMessage = (
   }).postMessage(response, transfer);
 };
 
-const createCanvasFromImageData = (imageData: ImageData) => {
-  const canvas = new OffscreenCanvas(imageData.width, imageData.height);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Unable to create worker canvas context.");
-  ctx.putImageData(imageData, 0, 0);
-  return canvas;
-};
+interface MemoryCanvas extends CanvasLike {
+  imageData: ImageData;
+}
 
-const getCanvasImageData = (canvas: OffscreenCanvas) => {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Unable to read worker canvas context.");
-  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+const cloneImageData = (imageData: ImageData) =>
+  new ImageData(
+    new Uint8ClampedArray(imageData.data),
+    imageData.width,
+    imageData.height,
+  );
+
+const createMemoryCanvas = (imageData: ImageData): MemoryCanvas => {
+  const canvas = {
+    width: imageData.width,
+    height: imageData.height,
+    imageData,
+    getContext() {
+      return {
+        getImageData() {
+          return cloneImageData(canvas.imageData);
+        },
+        putImageData(nextImageData: ImageData) {
+          canvas.width = nextImageData.width;
+          canvas.height = nextImageData.height;
+          canvas.imageData = nextImageData;
+        },
+      };
+    },
+  };
+
+  return canvas;
 };
 
 self.addEventListener("message", async (event: MessageEvent<ProcessRequest>) => {
   const { id, imageData, options, palette } = event.data;
 
   try {
-    const sourceCanvas = createCanvasFromImageData(imageData);
-    const adjustedCanvas = new OffscreenCanvas(imageData.width, imageData.height);
-    const ditheredCanvas = new OffscreenCanvas(imageData.width, imageData.height);
-    const deviceCanvas = new OffscreenCanvas(imageData.width, imageData.height);
+    const sourceCanvas = createMemoryCanvas(imageData);
+    const adjustedCanvas = createMemoryCanvas(cloneImageData(imageData));
+    const ditheredCanvas = createMemoryCanvas(cloneImageData(imageData));
+    const deviceCanvas = createMemoryCanvas(cloneImageData(imageData));
 
     await applyImageAdjustments(sourceCanvas, adjustedCanvas, {
       ...options,
@@ -58,9 +77,9 @@ self.addEventListener("message", async (event: MessageEvent<ProcessRequest>) => 
     });
     replaceColors(ditheredCanvas, deviceCanvas, palette);
 
-    const adjustedImageData = getCanvasImageData(adjustedCanvas);
-    const ditheredImageData = getCanvasImageData(ditheredCanvas);
-    const deviceImageData = getCanvasImageData(deviceCanvas);
+    const adjustedImageData = adjustedCanvas.imageData;
+    const ditheredImageData = ditheredCanvas.imageData;
+    const deviceImageData = deviceCanvas.imageData;
     const response: ProcessResponse = {
       id,
       adjustedImageData,

@@ -45,6 +45,7 @@ export interface ProcessingSuggestion {
 export type AutoImageAdjustmentOptions = Pick<
   Partial<DitherImageOptions>,
   | "toneMapping"
+  | "clarity"
   | "dynamicRangeCompression"
   | "levelCompression"
   | "paperNormalization"
@@ -103,6 +104,12 @@ interface RecommendationBase {
   levelCompression?: DitherImageOptions["levelCompression"];
   paperNormalization?: DitherImageOptions["paperNormalization"];
 }
+
+const exposureAdjustmentFromMultiplier = (multiplier: number) =>
+  Number(Math.log2(multiplier).toFixed(3));
+
+const linearAdjustmentFromMultiplier = (multiplier: number) =>
+  Number((multiplier - 1).toFixed(3));
 
 export function suggestProcessingOptions(
   image: ImageDataLike,
@@ -401,7 +408,7 @@ function enforceMinimumAutoContrast(recommendation: RecommendationBase) {
   if (recommendation.toneMapping?.mode === "contrast") {
     recommendation.toneMapping = {
       ...recommendation.toneMapping,
-      contrast: Math.max(recommendation.toneMapping.contrast ?? 1, 1),
+      contrast: Math.max(recommendation.toneMapping.contrast ?? 0, 0),
     };
     return;
   }
@@ -410,11 +417,11 @@ function enforceMinimumAutoContrast(recommendation: RecommendationBase) {
 
   const preset = getProcessingPreset(recommendation.processingPreset);
   if (preset?.toneMapping.mode !== "contrast") return;
-  if ((preset.toneMapping.contrast ?? 1) >= 1) return;
+  if ((preset.toneMapping.contrast ?? 0) >= 0) return;
 
   recommendation.toneMapping = {
     ...preset.toneMapping,
-    contrast: 1,
+    contrast: 0,
   };
 }
 
@@ -453,9 +460,9 @@ function getBaseRecommendation(
         ditheringType: "quantizationOnly",
         toneMapping: {
           mode: "contrast",
-          exposure: 1.05,
-          saturation: 1,
-          contrast: 1.18,
+          exposure: exposureAdjustmentFromMultiplier(1.05),
+          saturation: 0,
+          contrast: linearAdjustmentFromMultiplier(1.18),
         },
         dynamicRangeCompression: { mode: "display", strength: 0.75 },
       };
@@ -467,9 +474,9 @@ function getBaseRecommendation(
         ditheringType: "quantizationOnly",
         toneMapping: {
           mode: "contrast",
-          exposure: 1,
-          saturation: 0.8,
-          contrast: 1.25,
+          exposure: 0,
+          saturation: linearAdjustmentFromMultiplier(0.8),
+          contrast: linearAdjustmentFromMultiplier(1.25),
         },
         dynamicRangeCompression: { mode: "display", strength: 0.65 },
       };
@@ -479,7 +486,7 @@ function getBaseRecommendation(
         colorMatching: "rgb",
         errorDiffusionMatrix: "floydSteinberg",
         ditheringType: "quantizationOnly",
-        toneMapping: { mode: "off", exposure: 1, saturation: 1 },
+        toneMapping: { mode: "off", exposure: 0, saturation: 0 },
         dynamicRangeCompression: { mode: "off" },
       };
     case "flatIllustration":
@@ -490,10 +497,10 @@ function getBaseRecommendation(
         ditheringType: "errorDiffusion",
         toneMapping: {
           mode: "scurve",
-          saturation: 1.45,
+          saturation: linearAdjustmentFromMultiplier(1.45),
           strength: 0.72,
           shadowBoost: 0.08,
-          highlightCompress: 1.3,
+          highlightCompress: -1.3,
           midpoint: 0.5,
         },
       };
@@ -512,11 +519,11 @@ function getBaseRecommendation(
         ditheringType: "errorDiffusion",
         toneMapping: {
           mode: "scurve",
-          exposure: 1.08,
-          saturation: 0.9,
+          exposure: exposureAdjustmentFromMultiplier(1.08),
+          saturation: linearAdjustmentFromMultiplier(0.9),
           strength: 1,
           shadowBoost: 0.25,
-          highlightCompress: 0.75,
+          highlightCompress: -0.75,
           midpoint: 0.46,
         },
         dynamicRangeCompression: {
@@ -636,14 +643,21 @@ function applyLayeredAutoAdjustments(
     case "lowContrastPhoto":
       recommendation.toneMapping = {
         mode: "scurve",
-        exposure: Math.max(recommendation.toneMapping?.exposure ?? 1, 1.06),
+        exposure: Math.max(
+          recommendation.toneMapping?.exposure ?? 0,
+          exposureAdjustmentFromMultiplier(1.06)
+        ),
         saturation:
           metrics.grayRatio >= 0.72
-            ? 0
-            : Math.min(recommendation.toneMapping?.saturation ?? 0.9, 1.05),
+            ? linearAdjustmentFromMultiplier(0)
+            : Math.min(
+                recommendation.toneMapping?.saturation ??
+                  linearAdjustmentFromMultiplier(0.9),
+                linearAdjustmentFromMultiplier(1.05)
+              ),
         strength: metrics.lumaRange <= 70 ? 1 : 0.9,
         shadowBoost: metrics.lumaP05 >= 55 ? 0.2 : 0.28,
-        highlightCompress: 0.75,
+        highlightCompress: -0.75,
         midpoint: metrics.lumaP95 <= 190 ? 0.44 : 0.46,
       };
       recommendation.dynamicRangeCompression = {
@@ -667,9 +681,9 @@ function applyLayeredAutoAdjustments(
     case "highContrastPhoto":
       recommendation.toneMapping = {
         mode: "contrast",
-        exposure: 1,
-        saturation: 1.05,
-        contrast: 1,
+        exposure: 0,
+        saturation: linearAdjustmentFromMultiplier(1.05),
+        contrast: 0,
       };
       recommendation.dynamicRangeCompression = {
         mode: "display",
@@ -681,14 +695,14 @@ function applyLayeredAutoAdjustments(
       if (metrics.lumaStdDev <= 42) {
         recommendation.toneMapping = {
           mode: "scurve",
-          exposure: 1.04,
+          exposure: exposureAdjustmentFromMultiplier(1.04),
           saturation: Math.max(
-            recommendation.toneMapping?.saturation ?? 1,
-            1.12
+            recommendation.toneMapping?.saturation ?? 0,
+            linearAdjustmentFromMultiplier(1.12)
           ),
           strength: 0.66,
           shadowBoost: 0.05,
-          highlightCompress: 1.2,
+          highlightCompress: -1.2,
           midpoint: 0.49,
         };
         recommendation.dynamicRangeCompression = {
@@ -714,11 +728,13 @@ function applyLayeredAutoAdjustments(
     case "flatIllustration":
       recommendation.toneMapping = {
         mode: "scurve",
-        exposure: 1.06,
-        saturation: metrics.highSaturationRatio >= 0.28 ? 1.35 : 1.45,
+        exposure: exposureAdjustmentFromMultiplier(1.06),
+        saturation: linearAdjustmentFromMultiplier(
+          metrics.highSaturationRatio >= 0.28 ? 1.35 : 1.45
+        ),
         strength: 0.68,
         shadowBoost: 0.06,
-        highlightCompress: 1.2,
+        highlightCompress: -1.2,
         midpoint: 0.5,
       };
       recommendation.dynamicRangeCompression = { mode: "off" };
@@ -727,9 +743,11 @@ function applyLayeredAutoAdjustments(
     case "textOrUi":
       recommendation.toneMapping = {
         mode: "contrast",
-        exposure: 1.04,
-        saturation: metrics.grayRatio >= 0.7 ? 0.85 : 1,
-        contrast: 1.2,
+        exposure: exposureAdjustmentFromMultiplier(1.04),
+        saturation: linearAdjustmentFromMultiplier(
+          metrics.grayRatio >= 0.7 ? 0.85 : 1
+        ),
+        contrast: linearAdjustmentFromMultiplier(1.2),
       };
       recommendation.dynamicRangeCompression = {
         mode: "display",
@@ -740,9 +758,11 @@ function applyLayeredAutoAdjustments(
     case "lineArt":
       recommendation.toneMapping = {
         mode: "contrast",
-        exposure: 1,
-        saturation: 0.75,
-        contrast: metrics.lumaRange <= 96 ? 1.42 : 1.25,
+        exposure: 0,
+        saturation: linearAdjustmentFromMultiplier(0.75),
+        contrast: linearAdjustmentFromMultiplier(
+          metrics.lumaRange <= 96 ? 1.42 : 1.25
+        ),
       };
       recommendation.dynamicRangeCompression = {
         mode: metrics.lumaRange <= 96 ? "auto" : "display",
@@ -757,7 +777,7 @@ function applyLayeredAutoAdjustments(
       reasons.push("Line art gets desaturated contrast for cleaner edges.");
       break;
     case "pixelArt":
-      recommendation.toneMapping = { mode: "off", exposure: 1, saturation: 1 };
+      recommendation.toneMapping = { mode: "off", exposure: 0, saturation: 0 };
       recommendation.dynamicRangeCompression = { mode: "off" };
       reasons.push("Pixel art avoids tone reshaping and diffusion texture.");
       break;
@@ -805,11 +825,15 @@ function applyLowContrastRestoreTuning(
   recommendation.ditheringType = "errorDiffusion";
   recommendation.toneMapping = {
     mode: "scurve",
-    exposure: metrics.lumaP95 <= 190 ? 1.1 : 1.06,
-    saturation: metrics.grayRatio >= 0.72 ? 0 : 0.9,
+    exposure: exposureAdjustmentFromMultiplier(
+      metrics.lumaP95 <= 190 ? 1.1 : 1.06
+    ),
+    saturation: linearAdjustmentFromMultiplier(
+      metrics.grayRatio >= 0.72 ? 0 : 0.9
+    ),
     strength: metrics.lumaRange <= 70 ? 1 : 0.92,
     shadowBoost: metrics.lumaP05 >= 55 ? 0.2 : 0.28,
-    highlightCompress: 0.75,
+    highlightCompress: -0.75,
     midpoint: metrics.lumaP95 <= 190 ? 0.44 : 0.46,
   };
   recommendation.dynamicRangeCompression = {
@@ -873,11 +897,11 @@ function applyPosterScanTuning(
   };
   recommendation.toneMapping = {
     mode: "scurve",
-    exposure: 1.04,
-    saturation: 1.05,
+    exposure: exposureAdjustmentFromMultiplier(1.04),
+    saturation: linearAdjustmentFromMultiplier(1.05),
     strength: 0.92,
     shadowBoost: 0.08,
-    highlightCompress: 0.55,
+    highlightCompress: -0.55,
     midpoint: 0.44,
   };
   recommendation.dynamicRangeCompression = {
@@ -1050,10 +1074,13 @@ function applyIntent(
     recommendation.toneMapping = {
       ...recommendation.toneMapping,
       mode: "scurve",
-      saturation: Math.max(recommendation.toneMapping?.saturation ?? 1, 1.45),
+      saturation: Math.max(
+        recommendation.toneMapping?.saturation ?? 0,
+        linearAdjustmentFromMultiplier(1.45)
+      ),
       strength: recommendation.toneMapping?.strength ?? 0.72,
       shadowBoost: recommendation.toneMapping?.shadowBoost ?? 0.08,
-      highlightCompress: recommendation.toneMapping?.highlightCompress ?? 1.3,
+      highlightCompress: recommendation.toneMapping?.highlightCompress ?? -1.3,
       midpoint: recommendation.toneMapping?.midpoint ?? 0.5,
     };
     reasons.push("Vivid intent boosts saturation and color-priority matching.");
@@ -1094,9 +1121,9 @@ function applyLearnedTuning(
     recommendation.ditheringType = "quantizationOnly";
     recommendation.toneMapping = {
       mode: "contrast",
-      exposure: 1.03,
-      saturation: 0.9,
-      contrast: 1.2,
+      exposure: exposureAdjustmentFromMultiplier(1.03),
+      saturation: linearAdjustmentFromMultiplier(0.9),
+      contrast: linearAdjustmentFromMultiplier(1.2),
     };
     recommendation.dynamicRangeCompression = {
       mode: "display",
@@ -1127,11 +1154,11 @@ function applyPaletteTuning(
     recommendation.processingPreset = "grayscale";
     recommendation.toneMapping = {
       mode: "scurve",
-      exposure: 1,
-      saturation: 0,
+      exposure: 0,
+      saturation: linearAdjustmentFromMultiplier(0),
       strength: 0.8,
       shadowBoost: 0.1,
-      highlightCompress: 1.4,
+      highlightCompress: -1.4,
       midpoint: 0.5,
     };
     reasons.push("Monochrome palette switches to grayscale-oriented settings.");

@@ -3,7 +3,6 @@ import type { ProcessingSuggestion } from "../../src";
 export type ScreenOrientation = "landscape" | "portrait" | "original";
 export type ImageFitMode = "contain" | "cover";
 export type DynamicRangeMode = "off" | "display" | "auto";
-export type ToneMappingMode = "off" | "contrast" | "scurve";
 
 export type AutoRatingIssue =
   | "good"

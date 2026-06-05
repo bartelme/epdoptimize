@@ -10,6 +10,15 @@ import utilities from "./functions/utilities";
 import findClosestPaletteColor from "./functions/find-closest-palette-color";
 import { applyWasmRgbErrorDiffusion } from "./wasm-error-diffusion-rgb";
 import {
+  bayerDither,
+  blueNoiseDither,
+  kernelDiffusionDither,
+  riemersmaDither,
+  rgbQuantDiffusionDither,
+  simple2DDither,
+  type BayerSize,
+} from "../utils/dithering";
+import {
   applyImageProcessing,
   clampByte,
   deltaE,
@@ -18,6 +27,7 @@ import {
   rgbToLab,
   toRGB,
   toScalar,
+  type ClarityOptions,
   type ColorMatchingMode,
   type DynamicRangeCompressionOptions,
   type ImageProcessingOptions,
@@ -45,6 +55,14 @@ export type DitheringType =
   | "random"
   | "quantizationOnly"
   | "hueMix"
+  | "blueNoise"
+  | "simple2D"
+  | "riemersma"
+  | "ditherItErrorDiffusion"
+  | "ditherItOrdered"
+  | "ditherItBlueNoise"
+  | "ditherItSimple2D"
+  | "ditherItRiemersma"
   | (string & {});
 
 export type DitherProcessingEngine = "js" | "wasm" | "auto";
@@ -62,7 +80,7 @@ export interface DitherImageOptions {
   /**
    * Processing engine for supported hot paths.
    *
-   * Default: "js". "wasm" and "auto" currently accelerate RGB error diffusion
+   * Default: "auto". "wasm" and "auto" currently accelerate RGB error diffusion
    * and fall back to JS for unsupported modes.
    */
   processingEngine?: DitherProcessingEngine;
@@ -117,6 +135,59 @@ export interface DitherImageOptions {
    * Selective cleanup for scanned paper/poster sources before tone mapping.
    */
   paperNormalization?: PaperNormalizationOptions;
+
+  /**
+   * Midtone local-contrast adjustment before tone mapping.
+   */
+  clarity?: ClarityOptions;
+
+  /**
+   * Preserve hard text/line-art edges by replacing strong edge-core pixels with
+   * direct palette quantization after the main dithering pass.
+   */
+  edgePreservation?: EdgePreservationOptions;
+
+  /**
+   * Reduce jagged teeth on antialiased full-color transitions by constraining
+   * edge-band pixels to the two local palette colors on either side of an edge.
+   */
+  edgeAntialiasing?: EdgeAntialiasingOptions;
+}
+
+export interface EdgePreservationOptions {
+  enabled?: boolean;
+  /**
+   * 0..1. Higher values preserve more edge-core pixels.
+   */
+  strength?: number;
+  /**
+   * Luma-gradient threshold used to detect strong transitions.
+   */
+  threshold?: number;
+  /**
+   * Optional dilation radius for the protected edge core.
+   */
+  radius?: number;
+}
+
+export interface EdgeAntialiasingOptions {
+  enabled?: boolean;
+  /**
+   * 0..1. Higher values replace more eligible edge-band pixels.
+   */
+  strength?: number;
+  /**
+   * Luma-gradient threshold used to detect antialias transition bands.
+   */
+  threshold?: number;
+  /**
+   * Edge-band dilation radius, in pixels.
+   */
+  bandRadius?: number;
+  /**
+   * Neighborhood radius used to find the two local palette colors.
+   */
+  localRadius?: number;
 }
 
 export interface ImageDataLike {
@@ -137,6 +208,7 @@ export interface CanvasLike {
 }
 
 export type {
+  ClarityOptions,
   ColorMatchingMode,
   DynamicRangeCompressionOptions,
   ImageProcessingOptions,
@@ -164,6 +236,7 @@ const defaultOptions: Required<
     | "randomDitheringType"
     | "palette"
     | "colorMatching"
+    | "processingEngine"
     | "sampleColorsFromImage"
     | "numberOfSampleColors"
   >
@@ -180,6 +253,7 @@ const defaultOptions: Required<
 
   palette: "default",
   colorMatching: "rgb",
+  processingEngine: "auto",
 
   sampleColorsFromImage: false,
   numberOfSampleColors: 10,
@@ -308,6 +382,7 @@ const applyLevelCompression = (
 
 interface WhitePreservationPlan {
   sourceLumas: Float64Array;
+  sourceWhiteCandidates: Uint8Array;
   sourceWhiteLuma: number;
   targetWhite: RGB;
   targetWhiteLuma: number;
@@ -350,22 +425,37 @@ const getWhitePreservationPlan = (
   if (pixelCount <= 0) return null;
 
   const sourceLumas = new Float64Array(pixelCount);
+  const sourceWhiteCandidates = new Uint8Array(pixelCount);
   const visibleLumas: number[] = [];
+  const whiteCandidateLumas: number[] = [];
+  const maxWhiteSaturation = Math.min(
+    1,
+    Math.max(0, rangeOptions.whitePreserveMaxSaturation ?? 0.18)
+  );
+
   for (let i = 0, pixelIndex = 0; i < data.length; i += 4, pixelIndex++) {
     if (data[i + 3] <= 16) {
       sourceLumas[pixelIndex] = -1;
       continue;
     }
 
-    const luma = luma709(data[i], data[i + 1], data[i + 2]);
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const luma = luma709(r, g, b);
     sourceLumas[pixelIndex] = luma;
     visibleLumas.push(luma);
+
+    if (getSaturationFromChannels(r, g, b) <= maxWhiteSaturation) {
+      sourceWhiteCandidates[pixelIndex] = 1;
+      whiteCandidateLumas.push(luma);
+    }
   }
 
-  if (!visibleLumas.length) return null;
+  if (!visibleLumas.length || !whiteCandidateLumas.length) return null;
 
   const sourceWhiteLuma = getPercentile(
-    visibleLumas,
+    whiteCandidateLumas,
     rangeOptions.whitePreservePercentile ?? 0.99
   );
   if (sourceWhiteLuma < (rangeOptions.whitePreserveMinLuma ?? 150)) {
@@ -375,6 +465,7 @@ const getWhitePreservationPlan = (
   const targetWhite = getPaletteWhite(colorPalette);
   return {
     sourceLumas,
+    sourceWhiteCandidates,
     sourceWhiteLuma,
     targetWhite,
     targetWhiteLuma: luma709(...targetWhite),
@@ -390,6 +481,9 @@ const applyWhitePreservation = (
   const data = image.data;
   const [whiteR, whiteG, whiteB] = plan.targetWhite;
   for (let i = 0, pixelIndex = 0; i < data.length; i += 4, pixelIndex++) {
+    if (plan.sourceWhiteCandidates[pixelIndex] !== 1) {
+      continue;
+    }
     if (plan.sourceLumas[pixelIndex] + 0.0001 < plan.sourceWhiteLuma) {
       continue;
     }
@@ -407,16 +501,23 @@ const mergeImageProcessingOptions = (
   options: DitherImageOptions & typeof defaultOptions
 ): ImageProcessingOptions | undefined => {
   const hasToneMapping = options.toneMapping !== undefined;
+  const hasClarity = options.clarity !== undefined;
   const hasPaperNormalization = options.paperNormalization !== undefined;
   const hasDynamicRangeCompression =
     options.dynamicRangeCompression !== undefined;
 
-  if (!hasPaperNormalization && !hasToneMapping && !hasDynamicRangeCompression) {
+  if (
+    !hasPaperNormalization &&
+    !hasClarity &&
+    !hasToneMapping &&
+    !hasDynamicRangeCompression
+  ) {
     return undefined;
   }
 
   return {
     paperNormalization: options.paperNormalization,
+    clarity: options.clarity,
     toneMapping: options.toneMapping,
     dynamicRangeCompression: options.dynamicRangeCompression,
   };
@@ -495,12 +596,21 @@ const ditherImageData = async (
 ) => {
   const width = image.width;
   const height = image.height;
+  const edgeSourceData = shouldApplyEdgeHandling(options, colorPalette)
+    ? new Uint8ClampedArray(image.data)
+    : null;
 
   function setPixel(pixelIndex: number, pixel: RGBA) {
     image.data[pixelIndex] = pixel[0];
     image.data[pixelIndex + 1] = pixel[1];
     image.data[pixelIndex + 2] = pixel[2];
     image.data[pixelIndex + 3] = pixel[3] ?? 255;
+  }
+
+  if (isUtilsDitheringType(options.ditheringType)) {
+    applyUtilsDithering(image, options, colorPalette);
+    applyEdgeHandling(image, options, colorPalette, edgeSourceData);
+    return;
   }
 
   const thresholdMap = bayerMatrix([
@@ -603,6 +713,8 @@ const ditherImageData = async (
       );
     }
   }
+
+  applyEdgeHandling(image, options, colorPalette, edgeSourceData);
 };
 
 const applyImageAdjustments = async (
@@ -680,6 +792,143 @@ const shouldUseWasmErrorDiffusion = (
   engine: DitherProcessingEngine | undefined,
   colorMatching: ColorMatchingMode
 ) => (engine === "wasm" || engine === "auto") && colorMatching === "rgb";
+
+const isUtilsDitheringType = (ditheringType: DitheringType | undefined) =>
+  ditheringType === "blueNoise" ||
+  ditheringType === "simple2D" ||
+  ditheringType === "riemersma" ||
+  ditheringType === "ditherItErrorDiffusion" ||
+  ditheringType === "ditherItOrdered" ||
+  ditheringType === "ditherItBlueNoise" ||
+  ditheringType === "ditherItSimple2D" ||
+  ditheringType === "ditherItRiemersma";
+
+type UtilsColorSpace = "rgb" | "oklab";
+
+const applyUtilsDithering = (
+  image: ImageDataLike,
+  options: DitherImageOptions & typeof defaultOptions,
+  colorPalette: RGB[]
+) => {
+  const context = createUtilsDitherContext(image);
+  const imageData = image as unknown as ImageData;
+  const blockSize = 1;
+  const colorSpace = getUtilsColorSpace(options.colorMatching);
+
+  if (options.ditheringType === "ditherItOrdered") {
+    bayerDither(
+      context,
+      imageData,
+      colorPalette,
+      blockSize,
+      getUtilsBayerSize(options.orderedDitheringMatrix)
+    );
+    return;
+  }
+
+  if (
+    options.ditheringType === "blueNoise" ||
+    options.ditheringType === "ditherItBlueNoise"
+  ) {
+    blueNoiseDither(context, imageData, colorPalette, blockSize);
+    return;
+  }
+
+  if (
+    options.ditheringType === "simple2D" ||
+    options.ditheringType === "ditherItSimple2D"
+  ) {
+    simple2DDither(context, imageData, colorPalette, blockSize, colorSpace);
+    return;
+  }
+
+  if (
+    options.ditheringType === "riemersma" ||
+    options.ditheringType === "ditherItRiemersma"
+  ) {
+    riemersmaDither(context, imageData, colorPalette, blockSize, colorSpace);
+    return;
+  }
+
+  if (colorSpace === "rgb") {
+    rgbQuantDiffusionDither(
+      context,
+      imageData,
+      colorPalette,
+      blockSize,
+      getUtilsKernelName(options.errorDiffusionMatrix),
+      options.serpentine
+    );
+    return;
+  }
+
+  kernelDiffusionDither(
+    context,
+    imageData,
+    colorPalette,
+    blockSize,
+    getUtilsKernelName(options.errorDiffusionMatrix),
+    options.serpentine,
+    colorSpace
+  );
+};
+
+const createUtilsDitherContext = (image: ImageDataLike) =>
+  ({
+    canvas: {
+      width: image.width,
+      height: image.height,
+    },
+    putImageData(nextImage: ImageDataLike) {
+      if (nextImage.data !== image.data) {
+        image.data.set(nextImage.data);
+      }
+    },
+  }) as unknown as CanvasRenderingContext2D;
+
+const getUtilsColorSpace = (
+  colorMatching: ColorMatchingMode
+): UtilsColorSpace => (colorMatching === "lab" ? "oklab" : "rgb");
+
+const getUtilsBayerSize = (
+  matrixSize: [number, number] | number[]
+): BayerSize => {
+  const size = Math.max(matrixSize[0] ?? 4, matrixSize[1] ?? matrixSize[0] ?? 4);
+  if (size <= 2) return 2;
+  if (size <= 4) return 4;
+  if (size <= 8) return 8;
+  return 16;
+};
+
+const getUtilsKernelName = (matrixName: string) => {
+  const kernelNames: Record<string, string> = {
+    floydSteinberg: "FloydSteinberg",
+    FloydSteinberg: "FloydSteinberg",
+    falseFloydSteinberg: "FloydSteinberg",
+    atkinson: "Atkinson",
+    Atkinson: "Atkinson",
+    jarvis: "JarvisJudiceNinke",
+    jarvisJudiceNinke: "JarvisJudiceNinke",
+    JarvisJudiceNinke: "JarvisJudiceNinke",
+    stucki: "Stucki",
+    Stucki: "Stucki",
+    burkes: "Burkes",
+    Burkes: "Burkes",
+    sierra3: "Sierra3",
+    Sierra3: "Sierra3",
+    sierra2: "Sierra2",
+    Sierra2: "Sierra2",
+    "sierra2-4a": "Sierra24A",
+    fan: "Fan",
+    Fan: "Fan",
+    shiauFan: "ShiauFan",
+    ShiauFan: "ShiauFan",
+    shiauFan2: "ShiauFan2",
+    ShiauFan2: "ShiauFan2",
+  };
+
+  return kernelNames[matrixName] ?? "FloydSteinberg";
+};
 
 interface PaletteMatcher {
   hasPalette: boolean;
@@ -840,6 +1089,367 @@ const applyErrorDiffusion = (
       }
     }
   }
+};
+
+interface EdgeMasks {
+  core: Uint8Array;
+  band: Uint8Array;
+}
+
+const shouldApplyEdgeHandling = (
+  options: DitherImageOptions,
+  colorPalette: RGB[]
+) =>
+  colorPalette.length > 0 &&
+  (options.edgePreservation?.enabled === true ||
+    options.edgeAntialiasing?.enabled === true);
+
+const applyEdgeHandling = (
+  image: ImageDataLike,
+  options: DitherImageOptions,
+  colorPalette: RGB[],
+  sourceData: Uint8ClampedArray | null
+) => {
+  if (!sourceData || !shouldApplyEdgeHandling(options, colorPalette)) return;
+
+  const preserveOptions = options.edgePreservation;
+  const antialiasOptions = options.edgeAntialiasing;
+  const preserveEnabled = preserveOptions?.enabled === true;
+  const antialiasEnabled = antialiasOptions?.enabled === true;
+  const preserveStrength = clamp(preserveOptions?.strength ?? 0.65, 0, 1);
+  const antialiasStrength = clamp(antialiasOptions?.strength ?? 0.75, 0, 1);
+
+  if (
+    (preserveEnabled && preserveStrength <= 0) ||
+    (antialiasEnabled && antialiasStrength <= 0)
+  ) {
+    if (
+      (!preserveEnabled || preserveStrength <= 0) &&
+      (!antialiasEnabled || antialiasStrength <= 0)
+    ) {
+      return;
+    }
+  }
+
+  const threshold = Math.min(
+    preserveEnabled ? preserveOptions?.threshold ?? 42 : Infinity,
+    antialiasEnabled ? antialiasOptions?.threshold ?? 42 : Infinity
+  );
+  if (!Number.isFinite(threshold)) return;
+
+  const masks = buildEdgeMasks(sourceData, image.width, image.height, {
+    threshold,
+    coreThreshold:
+      threshold *
+      (preserveEnabled ? 1.7 - preserveStrength * 0.7 : 1.45),
+    coreRadius: preserveEnabled ? Math.max(0, preserveOptions?.radius ?? 0) : 0,
+    bandRadius: antialiasEnabled
+      ? Math.max(1, antialiasOptions?.bandRadius ?? 1)
+      : 0,
+  });
+  const quantized = getQuantizedData(
+    sourceData,
+    colorPalette,
+    options.colorMatching
+  );
+
+  if (antialiasEnabled) {
+    applyEdgeAntialiasing(
+      image,
+      sourceData,
+      quantized,
+      masks,
+      antialiasStrength,
+      Math.max(1, antialiasOptions?.localRadius ?? 2)
+    );
+  }
+
+  if (preserveEnabled) {
+    applyEdgePreservation(image, quantized, masks, preserveStrength);
+  }
+};
+
+const buildEdgeMasks = (
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  options: {
+    threshold: number;
+    coreThreshold: number;
+    coreRadius: number;
+    bandRadius: number;
+  }
+): EdgeMasks => {
+  const rawCore = new Uint8Array(width * height);
+  const core = new Uint8Array(width * height);
+  const band = new Uint8Array(width * height);
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const pixel = (y * width + x) * 4;
+      if (data[pixel + 3] <= 16) continue;
+
+      const left = (y * width + x - 1) * 4;
+      const right = (y * width + x + 1) * 4;
+      const up = ((y - 1) * width + x) * 4;
+      const down = ((y + 1) * width + x) * 4;
+      const dx = luma709(data[right], data[right + 1], data[right + 2]) -
+        luma709(data[left], data[left + 1], data[left + 2]);
+      const dy = luma709(data[down], data[down + 1], data[down + 2]) -
+        luma709(data[up], data[up + 1], data[up + 2]);
+      const magnitude = Math.sqrt(dx * dx + dy * dy);
+      const index = y * width + x;
+
+      if (magnitude >= options.threshold) {
+        dilateMaskAt(band, width, height, x, y, options.bandRadius);
+      }
+
+      if (magnitude >= options.coreThreshold) {
+        rawCore[index] = 1;
+      }
+    }
+  }
+
+  if (options.coreRadius > 0) {
+    for (let index = 0; index < rawCore.length; index += 1) {
+      if (rawCore[index] !== 1) continue;
+      const x = index % width;
+      const y = Math.floor(index / width);
+      dilateMaskAt(core, width, height, x, y, options.coreRadius);
+    }
+  } else {
+    core.set(rawCore);
+  }
+
+  return { core, band };
+};
+
+const dilateMaskAt = (
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  radius: number
+) => {
+  if (radius <= 0) {
+    mask[y * width + x] = 1;
+    return;
+  }
+
+  for (let oy = -radius; oy <= radius; oy += 1) {
+    for (let ox = -radius; ox <= radius; ox += 1) {
+      const nx = x + ox;
+      const ny = y + oy;
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+      mask[ny * width + nx] = 1;
+    }
+  }
+};
+
+const getQuantizedData = (
+  sourceData: Uint8ClampedArray,
+  colorPalette: RGB[],
+  colorMatching: ColorMatchingMode
+) => {
+  const quantized = new Uint8ClampedArray(sourceData);
+  const matcher = createPaletteMatcher(colorPalette, colorMatching);
+
+  for (let pixel = 0; pixel < quantized.length; pixel += 4) {
+    if (sourceData[pixel + 3] <= 16) continue;
+
+    const r = sourceData[pixel];
+    const g = sourceData[pixel + 1];
+    const b = sourceData[pixel + 2];
+    const closestIndex = matcher.findIndex(r, g, b, r, g, b);
+    if (closestIndex < 0) continue;
+
+    const color = colorPalette[closestIndex];
+    quantized[pixel] = color[0];
+    quantized[pixel + 1] = color[1];
+    quantized[pixel + 2] = color[2];
+    quantized[pixel + 3] = 255;
+  }
+
+  return quantized;
+};
+
+const applyEdgePreservation = (
+  image: ImageDataLike,
+  quantized: Uint8ClampedArray,
+  masks: EdgeMasks,
+  strength: number
+) => {
+  const data = image.data;
+
+  for (let index = 0; index < masks.core.length; index += 1) {
+    if (masks.core[index] !== 1) continue;
+    const x = index % image.width;
+    const y = Math.floor(index / image.width);
+    if (stableNoiseThreshold(x + 811, y + 3571) > strength) continue;
+
+    const pixel = index * 4;
+    data[pixel] = quantized[pixel];
+    data[pixel + 1] = quantized[pixel + 1];
+    data[pixel + 2] = quantized[pixel + 2];
+    data[pixel + 3] = quantized[pixel + 3];
+  }
+};
+
+const applyEdgeAntialiasing = (
+  image: ImageDataLike,
+  sourceData: Uint8ClampedArray,
+  quantized: Uint8ClampedArray,
+  masks: EdgeMasks,
+  strength: number,
+  localRadius: number
+) => {
+  const { width, height } = image;
+  const data = image.data;
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const index = y * width + x;
+      if (masks.band[index] !== 1) continue;
+      if (stableNoiseThreshold(x + 2371, y + 593) > strength) continue;
+
+      const pair = getLocalPalettePair(
+        quantized,
+        width,
+        height,
+        x,
+        y,
+        localRadius
+      );
+      if (!pair) continue;
+
+      const pixel = index * 4;
+      const source: RGB = [
+        sourceData[pixel],
+        sourceData[pixel + 1],
+        sourceData[pixel + 2],
+      ];
+      const coverage = getSegmentCoverage(source, pair[0], pair[1]);
+      const residual = getSegmentResidual(source, pair[0], pair[1], coverage);
+
+      if (residual > 95) continue;
+
+      if (coverage <= 0.08 || coverage >= 0.92 || masks.core[index] === 1) {
+        data[pixel] = quantized[pixel];
+        data[pixel + 1] = quantized[pixel + 1];
+        data[pixel + 2] = quantized[pixel + 2];
+        data[pixel + 3] = quantized[pixel + 3];
+        continue;
+      }
+
+      const color =
+        stableNoiseThreshold(x, y) < coverage ? pair[1] : pair[0];
+      data[pixel] = color[0];
+      data[pixel + 1] = color[1];
+      data[pixel + 2] = color[2];
+      data[pixel + 3] = 255;
+    }
+  }
+};
+
+interface LocalPaletteCandidate {
+  color: RGB;
+  count: number;
+}
+
+const getLocalPalettePair = (
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  radius: number
+): [RGB, RGB] | null => {
+  const counts = new Map<number, LocalPaletteCandidate>();
+
+  for (let oy = -radius; oy <= radius; oy += 1) {
+    for (let ox = -radius; ox <= radius; ox += 1) {
+      const nx = x + ox;
+      const ny = y + oy;
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+
+      const pixel = (ny * width + nx) * 4;
+      if (data[pixel + 3] <= 16) continue;
+
+      const color: RGB = [data[pixel], data[pixel + 1], data[pixel + 2]];
+      const key = (color[0] << 16) | (color[1] << 8) | color[2];
+      const existing = counts.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        counts.set(key, { color, count: 1 });
+      }
+    }
+  }
+
+  const candidates = Array.from(counts.values())
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 5);
+  if (candidates.length < 2) return null;
+
+  let best: [RGB, RGB] | null = null;
+  let bestScore = -Infinity;
+  for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < candidates.length;
+      rightIndex += 1
+    ) {
+      const left = candidates[leftIndex];
+      const right = candidates[rightIndex];
+      const distance = colorDistance(left.color, right.color);
+      const score = distance + Math.min(left.count, right.count) * 8;
+      if (score > bestScore) {
+        bestScore = score;
+        best = [left.color, right.color];
+      }
+    }
+  }
+
+  return bestScore >= 45 ? best : null;
+};
+
+const getSegmentCoverage = (source: RGB, a: RGB, b: RGB) => {
+  const abR = b[0] - a[0];
+  const abG = b[1] - a[1];
+  const abB = b[2] - a[2];
+  const lengthSq = abR * abR + abG * abG + abB * abB;
+  if (lengthSq <= 0.0001) return 0;
+
+  return clamp(
+    ((source[0] - a[0]) * abR +
+      (source[1] - a[1]) * abG +
+      (source[2] - a[2]) * abB) /
+      lengthSq,
+    0,
+    1
+  );
+};
+
+const getSegmentResidual = (source: RGB, a: RGB, b: RGB, coverage: number) => {
+  const mixed: RGB = [
+    a[0] + (b[0] - a[0]) * coverage,
+    a[1] + (b[1] - a[1]) * coverage,
+    a[2] + (b[2] - a[2]) * coverage,
+  ];
+  return colorDistance(source, mixed);
+};
+
+const colorDistance = (left: RGB, right: RGB) => {
+  const dr = left[0] - right[0];
+  const dg = left[1] - right[1];
+  const db = left[2] - right[2];
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+};
+
+const stableNoiseThreshold = (x: number, y: number) => {
+  const value = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return value - Math.floor(value);
 };
 
 const randomDitherPixelValue = (pixel: RGBA): RGBA => {

@@ -6,3 +6,6 @@ node_modules/.package-lock.json
 .env
 dist/*
 .DS_Store
+.playwright-cli/*
+examples/dither-debug/*
+examples/sampleImages/*

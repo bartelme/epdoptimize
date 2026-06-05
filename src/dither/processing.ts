@@ -23,10 +23,25 @@ export interface LevelCompressionOptions {
   percentileClip?: PercentileClip;
 }
 
+export interface ClarityOptions {
+  amount?: number;
+  radius?: number;
+  midtone?: number;
+}
+
 export interface ToneMappingOptions {
   mode?: ToneMappingMode;
+  /**
+   * Exposure adjustment in stops. `0` is neutral, `1` doubles brightness.
+   */
   exposure?: number;
+  /**
+   * Saturation adjustment. `0` is neutral, `0.5` means 1.5x, `-1` removes saturation.
+   */
   saturation?: number;
+  /**
+   * Contrast adjustment. `0` is neutral, `0.25` means 1.25x, `-0.1` means 0.9x.
+   */
   contrast?: number;
   strength?: number;
   shadowBoost?: number;
@@ -44,6 +59,7 @@ export interface DynamicRangeCompressionOptions {
   preserveWhite?: boolean;
   whitePreservePercentile?: number;
   whitePreserveMinLuma?: number;
+  whitePreserveMaxSaturation?: number;
 }
 
 export interface PaperNormalizationOptions {
@@ -59,6 +75,7 @@ export interface PaperNormalizationOptions {
 
 export interface ImageProcessingOptions {
   paperNormalization?: PaperNormalizationOptions;
+  clarity?: ClarityOptions;
   toneMapping?: ToneMappingOptions;
   dynamicRangeCompression?: DynamicRangeCompressionOptions | boolean;
 }
@@ -90,6 +107,18 @@ export interface ImageDataLike {
   data: Uint8ClampedArray;
 }
 
+const exposureAdjustmentFromMultiplier = (multiplier: number) =>
+  Number(Math.log2(multiplier).toFixed(3));
+
+const linearAdjustmentFromMultiplier = (multiplier: number) =>
+  Number((multiplier - 1).toFixed(3));
+
+const exposureAdjustmentToMultiplier = (adjustment: number) =>
+  Math.pow(2, adjustment);
+
+const linearAdjustmentToMultiplier = (adjustment: number) =>
+  Math.max(0, adjustment + 1);
+
 export const PROCESSING_PRESETS: Record<string, ProcessingPreset> = {
   balanced: {
     name: "balanced",
@@ -98,9 +127,9 @@ export const PROCESSING_PRESETS: Record<string, ProcessingPreset> = {
       "Compresses display luminance range for general photo conversion.",
     toneMapping: {
       mode: "contrast",
-      exposure: 1,
-      saturation: 1,
-      contrast: 1,
+      exposure: 0,
+      saturation: 0,
+      contrast: 0,
     },
     dynamicRangeCompression: {
       mode: "display",
@@ -116,11 +145,11 @@ export const PROCESSING_PRESETS: Record<string, ProcessingPreset> = {
       "Uses S-curve tone mapping for brighter, punchier photographic output.",
     toneMapping: {
       mode: "scurve",
-      exposure: 1,
-      saturation: 1.3,
+      exposure: 0,
+      saturation: linearAdjustmentFromMultiplier(1.3),
       strength: 0.9,
       shadowBoost: 0,
-      highlightCompress: 1.5,
+      highlightCompress: -1.5,
       midpoint: 0.5,
     },
     dynamicRangeCompression: {
@@ -135,11 +164,11 @@ export const PROCESSING_PRESETS: Record<string, ProcessingPreset> = {
     description: "Boosts color and applies a gentler S-curve for illustrations.",
     toneMapping: {
       mode: "scurve",
-      exposure: 1.1,
-      saturation: 1.6,
+      exposure: exposureAdjustmentFromMultiplier(1.1),
+      saturation: linearAdjustmentFromMultiplier(1.6),
       strength: 0.7,
       shadowBoost: 0.1,
-      highlightCompress: 1.3,
+      highlightCompress: -1.3,
       midpoint: 0.5,
     },
     dynamicRangeCompression: {
@@ -154,9 +183,9 @@ export const PROCESSING_PRESETS: Record<string, ProcessingPreset> = {
     description: "Reduces contrast and uses Stucki diffusion for smoother tones.",
     toneMapping: {
       mode: "contrast",
-      exposure: 1,
-      saturation: 1.1,
-      contrast: 0.9,
+      exposure: 0,
+      saturation: linearAdjustmentFromMultiplier(1.1),
+      contrast: linearAdjustmentFromMultiplier(0.9),
     },
     dynamicRangeCompression: {
       mode: "display",
@@ -171,11 +200,11 @@ export const PROCESSING_PRESETS: Record<string, ProcessingPreset> = {
     description: "Removes saturation and uses LAB matching for monochrome work.",
     toneMapping: {
       mode: "scurve",
-      exposure: 1,
-      saturation: 0,
+      exposure: 0,
+      saturation: linearAdjustmentFromMultiplier(0),
       strength: 0.8,
       shadowBoost: 0.1,
-      highlightCompress: 1.4,
+      highlightCompress: -1.4,
       midpoint: 0.5,
     },
     dynamicRangeCompression: {
@@ -192,11 +221,11 @@ export const PROCESSING_PRESETS: Record<string, ProcessingPreset> = {
       "Expands faded scans and paintings before mapping them to the display range.",
     toneMapping: {
       mode: "scurve",
-      exposure: 1.08,
-      saturation: 0.9,
+      exposure: exposureAdjustmentFromMultiplier(1.08),
+      saturation: linearAdjustmentFromMultiplier(0.9),
       strength: 1,
       shadowBoost: 0.25,
-      highlightCompress: 0.75,
+      highlightCompress: -0.75,
       midpoint: 0.46,
     },
     dynamicRangeCompression: {
@@ -225,11 +254,11 @@ export const PROCESSING_PRESETS: Record<string, ProcessingPreset> = {
     },
     toneMapping: {
       mode: "scurve",
-      exposure: 1.04,
-      saturation: 1.05,
+      exposure: exposureAdjustmentFromMultiplier(1.04),
+      saturation: linearAdjustmentFromMultiplier(1.05),
       strength: 0.92,
       shadowBoost: 0.08,
-      highlightCompress: 0.55,
+      highlightCompress: -0.55,
       midpoint: 0.44,
     },
     dynamicRangeCompression: {
@@ -282,6 +311,30 @@ export const clampByte = (value: number) => {
 export const luma709 = (r: number, g: number, b: number) =>
   0.2126 * r + 0.7152 * g + 0.0722 * b;
 
+const srgbToLinear = (() => {
+  const values = new Float64Array(256);
+  for (let value = 0; value < values.length; value += 1) {
+    const normalized = value / 255;
+    values[value] =
+      normalized > 0.04045
+        ? Math.pow((normalized + 0.055) / 1.055, 2.4)
+        : normalized / 12.92;
+  }
+  return values;
+})();
+
+const labForwardPivot = (value: number) =>
+  value > 0.008856 ? Math.cbrt(value) : 7.787 * value + 16 / 116;
+
+const rgbToLabLightness = (r: number, g: number, b: number) => {
+  const y =
+    srgbToLinear[r] * 0.2126729 +
+    srgbToLinear[g] * 0.7151522 +
+    srgbToLinear[b] * 0.072175;
+
+  return 116 * labForwardPivot(y) - 16;
+};
+
 export const toRGB = (value: LevelRGB | undefined, fallback: number): RGB => {
   if (Array.isArray(value)) {
     return [
@@ -306,13 +359,9 @@ export const toScalar = (value: LevelRGB | undefined, fallback: number) => {
 };
 
 const rgbToXyz = (r: number, g: number, b: number) => {
-  let rn = r / 255;
-  let gn = g / 255;
-  let bn = b / 255;
-
-  rn = rn > 0.04045 ? Math.pow((rn + 0.055) / 1.055, 2.4) : rn / 12.92;
-  gn = gn > 0.04045 ? Math.pow((gn + 0.055) / 1.055, 2.4) : gn / 12.92;
-  bn = bn > 0.04045 ? Math.pow((bn + 0.055) / 1.055, 2.4) : bn / 12.92;
+  const rn = srgbToLinear[r];
+  const gn = srgbToLinear[g];
+  const bn = srgbToLinear[b];
 
   return [
     (rn * 0.4124564 + gn * 0.3575761 + bn * 0.1804375) * 100,
@@ -322,13 +371,9 @@ const rgbToXyz = (r: number, g: number, b: number) => {
 };
 
 const xyzToLab = (x: number, y: number, z: number) => {
-  let xn = x / 95.047;
-  let yn = y / 100;
-  let zn = z / 108.883;
-
-  xn = xn > 0.008856 ? Math.pow(xn, 1 / 3) : 7.787 * xn + 16 / 116;
-  yn = yn > 0.008856 ? Math.pow(yn, 1 / 3) : 7.787 * yn + 16 / 116;
-  zn = zn > 0.008856 ? Math.pow(zn, 1 / 3) : 7.787 * zn + 16 / 116;
+  const xn = labForwardPivot(x / 95.047);
+  const yn = labForwardPivot(y / 100);
+  const zn = labForwardPivot(z / 108.883);
 
   return [116 * yn - 16, 500 * (xn - yn), 200 * (yn - zn)] as RGB;
 };
@@ -386,6 +431,15 @@ const getSaturation = (r: number, g: number, b: number) => {
 
 const normalize = (value: number, min: number, max: number) =>
   clamp((value - min) / (max - min), 0, 1);
+
+const smoothstep = (edge0: number, edge1: number, value: number) => {
+  if (edge1 <= edge0) return value >= edge1 ? 1 : 0;
+  const x = normalize(value, edge0, edge1);
+  return x * x * (3 - 2 * x);
+};
+
+const getDynamicRangeChromaProtection = (r: number, g: number, b: number) =>
+  smoothstep(0.18, 0.68, getSaturation(r, g, b)) * 0.85;
 
 const isRedInk = (r: number, g: number, b: number, saturation: number) =>
   saturation >= 0.34 && r >= g + 24 && r >= b + 28;
@@ -454,6 +508,84 @@ const applyPaperNormalization = (
     data[i] = clampByte(r + (neutralR - r) * amount);
     data[i + 1] = clampByte(g + (neutralG - g) * amount);
     data[i + 2] = clampByte(b + (neutralB - b) * amount);
+  }
+};
+
+const applyClarity = (
+  image: ImageDataLike,
+  options: ClarityOptions | undefined
+) => {
+  if (!options) return;
+
+  const amount = clamp(options.amount ?? 0, -1, 1);
+  if (amount === 0) return;
+
+  const effectiveAmount = amount * 2;
+  const radius = clamp(Math.round(options.radius ?? 2), 1, 4);
+  const midtone = Math.max(0.1, options.midtone ?? 1.2);
+  const { data, width, height } = image;
+  const source = new Uint8ClampedArray(data);
+  const temp = new Uint8ClampedArray(data.length);
+  const kernelSize = radius * 2 + 1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+
+      for (let k = -radius; k <= radius; k += 1) {
+        const xi = clamp(x + k, 0, width - 1);
+        const index = (y * width + xi) * 4;
+        sumR += source[index];
+        sumG += source[index + 1];
+        sumB += source[index + 2];
+      }
+
+      const output = (y * width + x) * 4;
+      temp[output] = sumR / kernelSize;
+      temp[output + 1] = sumG / kernelSize;
+      temp[output + 2] = sumB / kernelSize;
+    }
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    for (let y = 0; y < height; y += 1) {
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+
+      for (let k = -radius; k <= radius; k += 1) {
+        const yi = clamp(y + k, 0, height - 1);
+        const index = (yi * width + x) * 4;
+        sumR += temp[index];
+        sumG += temp[index + 1];
+        sumB += temp[index + 2];
+      }
+
+      const output = (y * width + x) * 4;
+      const blurredR = sumR / kernelSize;
+      const blurredG = sumG / kernelSize;
+      const blurredB = sumB / kernelSize;
+      const r = source[output];
+      const g = source[output + 1];
+      const b = source[output + 2];
+      const lightness = luma709(r, g, b) / 255;
+      const midtoneWeight = Math.pow(
+        clamp(1 - Math.abs(2 * lightness - 1), 0, 1),
+        midtone
+      );
+
+      data[output] = clampByte(
+        r + effectiveAmount * (r - blurredR) * midtoneWeight
+      );
+      data[output + 1] = clampByte(
+        g + effectiveAmount * (g - blurredG) * midtoneWeight
+      );
+      data[output + 2] = clampByte(
+        b + effectiveAmount * (b - blurredB) * midtoneWeight
+      );
+    }
   }
 };
 
@@ -534,39 +666,132 @@ const applyScurveToneMap = (
   image: ImageDataLike,
   strength: number,
   shadowBoost: number,
-  highlightCompress: number,
+  highlightBoost: number,
   midpoint: number
 ) => {
   if (strength === 0) return;
   const data = image.data;
   const mid = clamp(midpoint, 0.01, 0.99);
+  const shadowExponent = clamp(1 - strength * shadowBoost, 0.15, 3);
+  const highlightExponent = clamp(1 - strength * highlightBoost, 0.15, 3);
+  const lookup = new Uint8ClampedArray(256);
+
+  for (let value = 0; value < lookup.length; value += 1) {
+    const normalized = value / 255;
+    let result: number;
+
+    if (normalized <= mid) {
+      const shadowValue = normalized / mid;
+      result = Math.pow(shadowValue, shadowExponent) * mid;
+    } else {
+      const highlightValue = (normalized - mid) / (1 - mid);
+      result =
+        mid + Math.pow(highlightValue, highlightExponent) * (1 - mid);
+    }
+
+    lookup[value] = clampByte(result * 255);
+  }
 
   for (let i = 0; i < data.length; i += 4) {
-    for (let c = 0; c < 3; c++) {
-      const normalized = data[i + c] / 255;
-      let result: number;
-
-      if (normalized <= mid) {
-        const shadowValue = normalized / mid;
-        result = Math.pow(shadowValue, 1 - strength * shadowBoost) * mid;
-      } else {
-        const highlightValue = (normalized - mid) / (1 - mid);
-        result =
-          mid +
-          Math.pow(highlightValue, 1 + strength * highlightCompress) *
-            (1 - mid);
-      }
-
-      data[i + c] = clampByte(result * 255);
-    }
+    data[i] = lookup[data[i]];
+    data[i + 1] = lookup[data[i + 1]];
+    data[i + 2] = lookup[data[i + 2]];
   }
 };
 
-const percentile = (values: number[], p: number) => {
-  if (values.length === 0) return 0;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const idx = clamp(Math.round((sorted.length - 1) * p), 0, sorted.length - 1);
-  return sorted[idx];
+const LIGHTNESS_HISTOGRAM_SCALE = 100;
+const LIGHTNESS_HISTOGRAM_BINS = 100 * LIGHTNESS_HISTOGRAM_SCALE + 1;
+
+const percentileFromHistogram = (
+  histogram: Uint32Array,
+  count: number,
+  p: number
+) => {
+  if (count <= 0) return 0;
+
+  const target = clamp(Math.round((count - 1) * p), 0, count - 1);
+  let seen = 0;
+
+  for (let index = 0; index < histogram.length; index += 1) {
+    seen += histogram[index];
+    if (seen > target) return index / LIGHTNESS_HISTOGRAM_SCALE;
+  }
+
+  return 100;
+};
+
+const CHROMA_GUARD_STEPS = 5;
+
+const isProtectedChromaFit = (
+  sourceLuma: number,
+  resultR: number,
+  resultG: number,
+  resultB: number,
+  sourceSaturation: number
+) => {
+  if (sourceSaturation < 0.16) return true;
+
+  const resultSaturation = getSaturation(resultR, resultG, resultB);
+  const minimumSaturation = Math.max(0.12, sourceSaturation * 0.72);
+  if (resultSaturation >= minimumSaturation) return true;
+
+  return luma709(resultR, resultG, resultB) <= sourceLuma + 4;
+};
+
+const labToRgbWithChromaGuard = (
+  sourceR: number,
+  sourceG: number,
+  sourceB: number,
+  sourceL: number,
+  a: number,
+  b: number,
+  targetL: number,
+  amount: number
+) => {
+  const sourceSaturation = getSaturation(sourceR, sourceG, sourceB);
+  const sourceLuma = luma709(sourceR, sourceG, sourceB);
+  const toRgb = (fitAmount: number) =>
+    labToRgb(sourceL + (targetL - sourceL) * fitAmount, a, b);
+  const result = toRgb(amount);
+
+  if (
+    targetL <= sourceL ||
+    isProtectedChromaFit(
+      sourceLuma,
+      result[0],
+      result[1],
+      result[2],
+      sourceSaturation
+    )
+  ) {
+    return result;
+  }
+
+  let low = 0;
+  let high = amount;
+  let protectedResult: RGB = [sourceR, sourceG, sourceB];
+
+  for (let step = 0; step < CHROMA_GUARD_STEPS; step += 1) {
+    const mid = (low + high) / 2;
+    const candidate = toRgb(mid);
+
+    if (
+      isProtectedChromaFit(
+        sourceLuma,
+        candidate[0],
+        candidate[1],
+        candidate[2],
+        sourceSaturation
+      )
+    ) {
+      low = mid;
+      protectedResult = candidate;
+    } else {
+      high = mid;
+    }
+  }
+
+  return protectedResult;
 };
 
 const getPaletteEndpoints = (
@@ -636,28 +861,57 @@ const applyDynamicRangeCompression = (
   let sourceWhiteL = 100;
 
   if (mode === "auto") {
-    const lightnesses: number[] = [];
+    const lightnessHistogram = new Uint32Array(LIGHTNESS_HISTOGRAM_BINS);
+    let lightnessCount = 0;
+
     for (let i = 0; i < data.length; i += 4) {
-      const [l] = rgbToLab(data[i], data[i + 1], data[i + 2]);
-      lightnesses.push(l);
+      const l = rgbToLabLightness(data[i], data[i + 1], data[i + 2]);
+      const bin = clamp(
+        Math.round(l * LIGHTNESS_HISTOGRAM_SCALE),
+        0,
+        LIGHTNESS_HISTOGRAM_BINS - 1
+      );
+      lightnessHistogram[bin] += 1;
+      lightnessCount += 1;
     }
-    sourceBlackL = percentile(lightnesses, normalized.lowPercentile ?? 0.01);
-    sourceWhiteL = percentile(lightnesses, normalized.highPercentile ?? 0.99);
+    sourceBlackL = percentileFromHistogram(
+      lightnessHistogram,
+      lightnessCount,
+      normalized.lowPercentile ?? 0.01
+    );
+    sourceWhiteL = percentileFromHistogram(
+      lightnessHistogram,
+      lightnessCount,
+      normalized.highPercentile ?? 0.99
+    );
   }
 
   const sourceRange = sourceWhiteL - sourceBlackL;
   if (sourceRange <= 0.0001) return;
 
   for (let i = 0; i < data.length; i += 4) {
-    const [l, a, b] = rgbToLab(data[i], data[i + 1], data[i + 2]);
+    const r = data[i];
+    const g = data[i + 1];
+    const blue = data[i + 2];
+    const [l, a, b] = rgbToLab(r, g, blue);
     const normalizedL = clamp((l - sourceBlackL) / sourceRange, 0, 1);
     const compressedL = blackL + normalizedL * targetRange;
-    const blendedL = l + (compressedL - l) * strength;
-    const [r, g, blue] = labToRgb(blendedL, a, b);
+    const chromaProtection = getDynamicRangeChromaProtection(r, g, blue);
+    const effectiveStrength = strength * (1 - chromaProtection);
+    const [newR, newG, newBlue] = labToRgbWithChromaGuard(
+      r,
+      g,
+      blue,
+      l,
+      a,
+      b,
+      compressedL,
+      effectiveStrength
+    );
 
-    data[i] = r;
-    data[i + 1] = g;
-    data[i + 2] = blue;
+    data[i] = newR;
+    data[i + 1] = newG;
+    data[i + 2] = newBlue;
   }
 };
 
@@ -667,21 +921,26 @@ export const applyToneMapping = (
 ) => {
   if (!options) return;
 
-  const exposure = options.exposure ?? 1;
-  const saturation = options.saturation ?? 1;
-  const mode = options.mode ?? "contrast";
+  const exposure = exposureAdjustmentToMultiplier(options.exposure ?? 0);
+  const saturation = linearAdjustmentToMultiplier(options.saturation ?? 0);
+  const contrast = linearAdjustmentToMultiplier(options.contrast ?? 0);
+  const mode = options.mode;
 
   applyExposure(image, exposure);
   applySaturation(image, saturation);
 
-  if (mode === "contrast") {
-    applyContrast(image, options.contrast ?? 1);
-  } else if (mode === "scurve") {
+  if (mode === "off") return;
+
+  if (!mode || mode === "contrast") {
+    applyContrast(image, contrast);
+  }
+
+  if (!mode || mode === "scurve") {
     applyScurveToneMap(
       image,
-      options.strength ?? 0.9,
+      options.strength ?? (mode === "scurve" ? 0.9 : 0),
       options.shadowBoost ?? 0,
-      options.highlightCompress ?? 1.5,
+      options.highlightCompress ?? -1.5,
       options.midpoint ?? 0.5
     );
   }
@@ -694,6 +953,7 @@ export const applyImageProcessing = (
 ) => {
   if (!options) return;
   applyPaperNormalization(image, options.paperNormalization);
+  applyClarity(image, options.clarity);
   applyToneMapping(image, options.toneMapping);
   applyDynamicRangeCompression(
     image,
