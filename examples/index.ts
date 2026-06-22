@@ -2102,13 +2102,99 @@ function markDownloadStale(link: HTMLAnchorElement) {
   link.href = "#";
 }
 
+function canvasToBmp4(canvas, palette) {
+  // palette: array of exactly 16 entries: [{ r, g, b }, ...]
+
+  if (palette.length !== 16) {
+    throw new Error("Palette must contain exactly 16 colours.");
+  }
+
+  const ctx = canvas.getContext("2d");
+  const { width, height } = canvas;
+  const src = ctx.getImageData(0, 0, width, height).data;
+
+  // Each row: ceil(width / 2) bytes, padded to a multiple of 4
+  const rowSize = Math.ceil(Math.ceil(width / 2) / 4) * 4;
+  const pixelDataSize = rowSize * height;
+  const colorTableSize = 16 * 4;                        // 16 RGBQUAD entries
+  const headerSize = 54;
+  const fileSize = headerSize + colorTableSize + pixelDataSize;
+
+  const buf = new ArrayBuffer(fileSize);
+  const view = new DataView(buf);
+
+  // --- File Header (14 bytes) ---
+  view.setUint16(0, 0x4D42, true);                      // "BM"
+  view.setUint32(2, fileSize, true);
+  view.setUint32(6, 0, true);                           // reserved
+  view.setUint32(10, headerSize + colorTableSize, true); // pixel data offset
+
+  // --- DIB Header / BITMAPINFOHEADER (40 bytes) ---
+  view.setUint32(14, 40, true);                         // header size
+  view.setInt32 (18, width, true);
+  view.setInt32 (22, -height, true);                    // negative = top-down
+  view.setUint16(26, 1, true);                          // colour planes
+  view.setUint16(28, 4, true);                          // ← bit depth (4bpp)
+  view.setUint32(30, 0, true);                          // no compression
+  view.setUint32(34, pixelDataSize, true);
+  view.setInt32 (38, 2835, true);                       // X pixels per metre
+  view.setInt32 (42, 2835, true);                       // Y pixels per metre
+  view.setUint32(46, 16, true);                         // colours used
+  view.setUint32(50, 16, true);                         // important colours
+
+  // --- Colour Table: 16 × RGBQUAD (B, G, R, reserved) ---
+  for (let i = 0; i < 16; i++) {
+    const base = headerSize + i * 4;
+    const { r, g, b } = palette[i];
+    view.setUint8(base + 0, b);                         // B
+    view.setUint8(base + 1, g);                         // G
+    view.setUint8(base + 2, r);                         // R
+    view.setUint8(base + 3, 0);                         // reserved
+  }
+
+  // --- Nearest-colour lookup (squared Euclidean distance in RGB) ---
+  function nearestIndex(r, g, b) {
+    let best = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < 16; i++) {
+      const dr = r - palette[i].r;
+      const dg = g - palette[i].g;
+      const db = b - palette[i].b;
+      const dist = dr * dr + dg * dg + db * db;
+      if (dist < bestDist) { bestDist = dist; best = i; }
+    }
+    return best;
+  }
+
+  // --- Pixel Data: two 4-bit indices packed per byte, high nibble first ---
+  const dataOffset = headerSize + colorTableSize;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x += 2) {
+      const i0 = (y * width + x) * 4;
+      const hi = nearestIndex(src[i0], src[i0 + 1], src[i0 + 2]);
+
+      let lo = 0;
+      if (x + 1 < width) {                             // guard odd-width images
+        const i1 = (y * width + x + 1) * 4;
+        lo = nearestIndex(src[i1], src[i1 + 1], src[i1 + 2]);
+      }
+
+      const byteIndex = dataOffset + y * rowSize + Math.floor(x / 2);
+      view.setUint8(byteIndex, (hi << 4) | lo);        // pack two nibbles
+    }
+  }
+
+  return new Blob([buf], { type: "image/bmp" });
+}
+
 function setupCanvasDownload(
   link: HTMLAnchorElement,
   canvas: HTMLCanvasElement,
 ) {
   link.addEventListener("click", (event) => {
     event.preventDefault();
-    canvas.toBlob((blob) => {
+    /*canvas.toBlob((blob) => {
       if (!blob) return;
 
       revokeDownloadUrl(link);
@@ -2119,7 +2205,33 @@ function setupCanvasDownload(
       generatedLink.href = url;
       generatedLink.download = link.download;
       generatedLink.click();
-    }, "image/png");
+    }, "image/bmp");*/
+    const palette = [
+      { r:   0, g:   0, b:   0 },   //  0 — black
+      { r: 255, g: 255, b: 255 },   //  1 — white
+      { r: 255, g: 255, b:   0 },   //  2 — yellow
+      { r: 255, g:   0, b:   0 },   //  3 — red
+      { r:   0, g:   0, b:   0 },   //  4 — black
+      { r:   0, g:   0, b: 255 },   //  5 — blue
+      { r:   0, g: 255, b:   0 },   //  6 — grean
+      { r:   0, g:   0, b:   0 },   //  7 — black
+      { r:   0, g:   0, b:   0 },   //  8 — black
+      { r:   0, g:   0, b:   0 },   //  9 — black
+      { r:   0, g:   0, b:   0 },   //  10 — black
+      { r:   0, g:   0, b:   0 },   //  11 — black
+      { r:   0, g:   0, b:   0 },   //  12 — black
+      { r:   0, g:   0, b:   0 },   //  13 — black
+      { r:   0, g:   0, b:   0 },   //  14 — black
+      { r:   0, g:   0, b:   0 },   //  15 — black
+    ];
+    revokeDownloadUrl(link);
+    const blob = canvasToBmp4(canvas, palette);
+    const url  = URL.createObjectURL(blob);
+    downloadObjectUrls.set(link, url);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = link.download;
+    a.click();
   });
 }
 
