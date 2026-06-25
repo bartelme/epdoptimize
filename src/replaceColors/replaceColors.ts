@@ -109,28 +109,25 @@ export const replaceColors = (
   const result = new ImageData(destCanvas.width, destCanvas.height);
 
   for (let row = 0; row < height; row++) {
-    const flippedRow = height - 1 - row;                      // mirror row index
-
     for (let col = 0; col < destCanvas.width; col++) {
 
-      // --- TOP HALF: right columns, upside down ---
-      const srcCol = col + destCanvas.width;
-      const srcIdx = (flippedRow * width + srcCol) * 4;       // read from flipped row
-      const dstIdx = (row * destCanvas.width + col) * 4;
+      // --- TOP HALF: left columns ---
+      const srcIdxLeft = (row * width + col) * 4;
+      const dstIdxTop  = (row * destCanvas.width + col) * 4;
 
-      result.data[dstIdx + 0] = data[srcIdx + 0];             // R
-      result.data[dstIdx + 1] = data[srcIdx + 1];             // G
-      result.data[dstIdx + 2] = data[srcIdx + 2];             // B
-      result.data[dstIdx + 3] = data[srcIdx + 3];             // A
+      result.data[dstIdxTop + 0] = data[srcIdxLeft + 0];        // R
+      result.data[dstIdxTop + 1] = data[srcIdxLeft + 1];        // G
+      result.data[dstIdxTop + 2] = data[srcIdxLeft + 2];        // B
+      result.data[dstIdxTop + 3] = data[srcIdxLeft + 3];        // A
 
-      // --- BOTTOM HALF: left columns, upside down ---
-      const srcIdx2 = (flippedRow * width + col) * 4;         // read from flipped row
-      const dstIdx2 = ((row + height) * destCanvas.width + col) * 4;
+      // --- BOTTOM HALF: right columns ---
+      const srcIdxRight = (row * width + col + destCanvas.width) * 4;
+      const dstIdxBot   = ((row + height) * destCanvas.width + col) * 4;
 
-      result.data[dstIdx2 + 0] = data[srcIdx2 + 0];           // R
-      result.data[dstIdx2 + 1] = data[srcIdx2 + 1];           // G
-      result.data[dstIdx2 + 2] = data[srcIdx2 + 2];           // B
-      result.data[dstIdx2 + 3] = data[srcIdx2 + 3];           // A
+      result.data[dstIdxBot + 0] = data[srcIdxRight + 0];       // R
+      result.data[dstIdxBot + 1] = data[srcIdxRight + 1];       // G
+      result.data[dstIdxBot + 2] = data[srcIdxRight + 2];       // B
+      result.data[dstIdxBot + 3] = data[srcIdxRight + 3];       // A
     }
   }
   destCtx.putImageData(result, 0, 0);

@@ -2194,18 +2194,6 @@ function setupCanvasDownload(
 ) {
   link.addEventListener("click", (event) => {
     event.preventDefault();
-    /*canvas.toBlob((blob) => {
-      if (!blob) return;
-
-      revokeDownloadUrl(link);
-      const url = URL.createObjectURL(blob);
-      downloadObjectUrls.set(link, url);
-
-      const generatedLink = document.createElement("a");
-      generatedLink.href = url;
-      generatedLink.download = link.download;
-      generatedLink.click();
-    }, "image/bmp");*/
     const palette = [
       { r:   0, g:   0, b:   0 },   //  0 — black
       { r: 255, g: 255, b: 255 },   //  1 — white
